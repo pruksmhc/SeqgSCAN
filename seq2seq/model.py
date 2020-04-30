@@ -263,11 +263,15 @@ class Model(nn.Module):
             shutil.copyfile(path, best_path)
         return path
 
-    def sample(self, data: torch.LongTensor, commands_input: torch.LongTensor, commands_lengths: List[int],
+    def sample(self, batch_size: int, length: int, commands_input: torch.LongTensor, commands_lengths: List[int],
                      situations_input: torch.Tensor, target_batch: torch.LongTensor,
-                     sos_idx: int, eos_idx: int, n = 16) -> List[int]:
+                     sos_idx: int, eos_idx: int, data: torch.LongTensor = None) -> List[int]:
+        MC = True
+        if data is None:
+            MC = False
+        else:
+            batch_size, length = data.size()
         
-        batch_size, length = data.size()
         # input_tokens_sorted = target_batch.index_select(dim=0, index=perm_idx)
 
         
@@ -286,34 +290,48 @@ class Model(nn.Module):
         max_decoding_steps = 30
         decoding_iteration = 0
         output_sequence = []
-        
-        
-        for i in range(length+1):
-            (output, hidden, _, _, _) = self.decode_input(
-                target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
-                input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
-            output_sequence.append(token.detach().tolist())
-            if i == length:
-                break
-            # output = F.log_softmax(output, dim=-1)
-            token = data[:,i]
-        
-        token = target_batch[:, length]
-        while not np.all(token.detach().cpu().numpy() == eos_idx) and decoding_iteration <= max_decoding_steps - length:
-            (output, hidden, _, _, _) = self.decode_input(
-                target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
-                input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
-            output = F.log_softmax(output, dim=-1)
-            token = output.max(dim=-1)[1]
-            output_sequence.append(token.data.tolist())
-            decoding_iteration += 1
-        
-        if output_sequence[-1] == eos_idx:
-            output_sequence.pop()
-
+        if not MC:
+            for _ in range(length):
+                (output, hidden, _, _, _) = self.decode_input(
+                    target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
+                    input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
+                token = F.softmax(output, dim=-1).multinomial(1).squeeze()
+                output_sequence.append(token.unsqueeze(0))
+                # print(token.unsqueeze(0).shape)
+        else:        
+            for i in range(length+1):
+                (output, hidden, _, _, _) = self.decode_input(
+                    target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
+                    input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
+                output_sequence.append(token.unsqueeze(0))
+                if i == length:
+                    token = F.softmax(output).multinomial(1).squeeze()
+                    break
+                # output = F.log_softmax(output, dim=-1)
+                token = data[:,i]
+            
+            while not np.all(token.detach().cpu().numpy() == eos_idx) and decoding_iteration <= max_decoding_steps - length:
+                (output, hidden, _, _, _) = self.decode_input(
+                    target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
+                    input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
+                output = F.softmax(output, dim=-1)
+                token = output.multinomial(1).squeeze()
+                output_sequence.append(token.unsqueeze(0))
+                decoding_iteration += 1
+        # print(np.array(output_sequence).shape)
+        # output_sequence = np.array(output_sequence).T.tolist() # [batch_size, max_length]
+        for i, j in enumerate(output_sequence[-1][0]):
+            if j == eos_idx:
+                output_sequence[-1][0][i] = 0
+        output_sequence = torch.cat(output_sequence, dim=0).T
+        # print(output_sequence.shape)
         return output_sequence
         
 
-            
+    def pred(self, commands_input: torch.LongTensor, commands_lengths: List[int], situations_input: torch.Tensor,
+                target_batch: torch.LongTensor, target_lengths: List[int])-> torch.Tensor:
+        
+        logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, target_lengths)     
+        return F.log_softmax(logits, dim=-1)
             
         

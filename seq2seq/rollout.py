@@ -36,9 +36,9 @@ class Rollout(object):
         for i in range(num):
             for l in range(1, seq_len):
                 data = x[:, 0:l]
-                samples = self.lstm.sample(data, commands_input, commands_lengths, 
+                samples = self.lstm.sample(batch_size, seq_len, commands_input, commands_lengths, 
                                         situations_input, target_batch, sos_idx, 
-                                        eos_idx, n=num)
+                                        eos_idx, data)
                 pred = reward_func(samples)
                 # pred = pred.cpu().data[:,1].numpy()
                 if i == 0:
