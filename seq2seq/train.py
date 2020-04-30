@@ -8,7 +8,7 @@ from seq2seq.rollout import Rollout
 from seq2seq.gSCAN_dataset import GroundedScanDataset
 from seq2seq.helpers import log_parameters
 from seq2seq.evaluate import evaluate
-
+from seq2seq.discriminator import Discriminator
 logger = logging.getLogger(__name__)
 use_cuda = True if torch.cuda.is_available() else False
 
@@ -32,7 +32,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                        input_vocabulary_file=input_vocab_path,
                                        target_vocabulary_file=target_vocab_path,
                                        generate_vocabulary=generate_vocabularies, k=k)
-    training_set.read_dataset(max_examples=max_training_examples,
+    training_set.read_dataset(max_examples=10,
                               simple_situation_representation=simple_situation_representation)
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
@@ -49,7 +49,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     test_set = GroundedScanDataset(data_path, data_directory, split="dev",
                                    input_vocabulary_file=input_vocab_path,
                                    target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    test_set.read_dataset(max_examples=None,
+    test_set.read_dataset(max_examples=10,
                           simple_situation_representation=simple_situation_representation)
 
     # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
@@ -63,7 +63,13 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                   target_pad_idx=training_set.target_vocabulary.pad_idx,
                   target_eos_idx=training_set.target_vocabulary.eos_idx,
                   **cfg)
+    total_vocabulary = set(list(training_set.input_vocabulary._word_to_idx.keys()) + list(training_set.target_vocabulary._word_to_idx.keys()))
+    total_vocabulary_size = len(total_vocabulary)
+    discriminator = Discriminator(300,  512, total_vocabulary_size, max_decoding_steps)
+
     model = model.cuda() if use_cuda else model
+    discriminator = discriminator.cuda() if use_cuda else discriminator
+    reward_func = lambda x: discriminator(x)
     rollout = Rollout(model, 0.8)
     log_parameters(model)
     trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
@@ -102,7 +108,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             target_scores, target_position_scores = model(commands_input=input_batch, commands_lengths=input_lengths,
                                                           situations_input=situation_batch, target_batch=target_batch,
                                                           target_lengths=target_lengths)
-            reward = rollout.get_reward(target_scores, 16, input_batch, input_lengths, situations_input, target_batch, training_set.input_vocabulary.sos_idx, training_set.input_vocabulary.eos_idx, reward_func)
+            reward = rollout.get_reward(target_scores, 16, input_batch, input_lengths, situation_batch, target_batch, training_set.input_vocabulary.sos_idx, training_set.input_vocabulary.eos_idx, reward_func)
             
             loss = model.get_loss(target_scores, target_batch)
             if auxiliary_task:
