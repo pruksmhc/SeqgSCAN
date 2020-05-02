@@ -263,7 +263,7 @@ class Model(nn.Module):
             shutil.copyfile(path, best_path)
         return path
 
-    def sample(self, batch_size: int, length: int, commands_input: torch.LongTensor, commands_lengths: List[int],
+    def sample(self, batch_size: int, max_seq_len: int, commands_input: torch.LongTensor, commands_lengths: List[int],
                      situations_input: torch.Tensor, target_batch: torch.LongTensor,
                      sos_idx: int, eos_idx: int, data: torch.LongTensor = None) -> List[int]:
         MC = True
@@ -271,10 +271,7 @@ class Model(nn.Module):
             MC = False
         else:
             batch_size, length = data.size()
-        
-        # input_tokens_sorted = target_batch.index_select(dim=0, index=perm_idx)
-
-        
+          
         encoded_input = self.encode_input(commands_input=commands_input,
                                            commands_lengths=commands_lengths,
                                            situations_input=situations_input)
@@ -291,26 +288,27 @@ class Model(nn.Module):
         decoding_iteration = 0
         output_sequence = []
         if not MC:
-            for _ in range(length):
+            for _ in range(max_seq_len):
                 (output, hidden, _, _, _) = self.decode_input(
                     target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
                     input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
                 token = F.softmax(output, dim=-1).multinomial(1).squeeze()
                 output_sequence.append(token.unsqueeze(0))
-                # print(token.unsqueeze(0).shape)
-        else:        
-            for i in range(length+1):
+        else:
+            (output, hidden, _, _, _) = self.decode_input(
+                    target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
+                    input_lengths=commands_lengths, encoded_situations=projected_keys_visual)        
+            for i in range(length):
+                token = data[:,i]
                 (output, hidden, _, _, _) = self.decode_input(
                     target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
                     input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
                 output_sequence.append(token.unsqueeze(0))
-                if i == length:
-                    token = F.softmax(output).multinomial(1).squeeze()
-                    break
-                # output = F.log_softmax(output, dim=-1)
-                token = data[:,i]
-            
-            while not np.all(token.detach().cpu().numpy() == eos_idx) and decoding_iteration <= max_decoding_steps - length:
+
+            token = F.softmax(output, dim=-1).multinomial(1).squeeze()
+            # ! which length max_decoding_length or target_length
+            # while not np.all(token.detach().cpu().numpy() == eos_idx) and decoding_iteration <= max_decoding_steps - length:
+            for i in range(length, max_seq_len):
                 (output, hidden, _, _, _) = self.decode_input(
                     target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
                     input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
@@ -318,20 +316,23 @@ class Model(nn.Module):
                 token = output.multinomial(1).squeeze()
                 output_sequence.append(token.unsqueeze(0))
                 decoding_iteration += 1
-        # print(np.array(output_sequence).shape)
-        # output_sequence = np.array(output_sequence).T.tolist() # [batch_size, max_length]
-        for i, j in enumerate(output_sequence[-1][0]):
-            if j == eos_idx:
-                output_sequence[-1][0][i] = 0
+        # for i, j in enumerate(output_sequence[-1][0]):
+        #     if j == eos_idx:
+        #         output_sequence[-1][0][i] = 0
+
+        # [batch_size, max_seq_len]
         output_sequence = torch.cat(output_sequence, dim=0).T
-        # print(output_sequence.shape)
         return output_sequence
         
-
+    
+    # TODO target length check
     def pred(self, commands_input: torch.LongTensor, commands_lengths: List[int], situations_input: torch.Tensor,
-                target_batch: torch.LongTensor, target_lengths: List[int])-> torch.Tensor:
-        
-        logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, target_lengths)     
-        return F.log_softmax(logits, dim=-1)
+                samples: torch.LongTensor, sample_lengths: List[int], sos_idx: int)-> torch.Tensor:
+        """ return probability of each state action pair in log space """
+        sos = torch.full((10, 1), sos_idx).type(torch.LongTensor).cuda()
+        target_batch = torch.cat([sos, samples], dim=1)[:, :-1].contiguous()
+
+        logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, sample_lengths)     
+        return F.log_softmax(logits, dim=-1).max(dim=-1)[0]
             
         
