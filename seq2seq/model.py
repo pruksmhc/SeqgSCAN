@@ -162,6 +162,28 @@ class Model(nn.Module):
         loss = self.loss_criterion(target_scores_2d, targets.view(-1))
         return loss
 
+    def get_gan_loss(self, prob, targets, rewards):
+        """
+           Args:
+               prob: (N, C), torch Variable
+               targets : (N, ), torch Variable
+               rewards : (N, ), torch Variable
+           """
+        N = targets.size(0)
+        C = prob.size(1)
+        one_hot = torch.zeros((N, C))
+        if prob.is_cuda:
+            one_hot = one_hot.cuda()
+        one_hot.scatter_(1, targets.data.view((-1, 1)), 1)
+        one_hot = one_hot.type(torch.ByteTensor)
+        one_hot = torch.autograd.Variable(one_hot)
+        if prob.is_cuda:
+            one_hot = one_hot.cuda()
+        loss = torch.masked_select(prob, one_hot)
+        loss = loss * rewards
+        loss = -torch.sum(loss)
+        return loss
+
     def get_auxiliary_loss(self, auxiliary_scores_target: torch.Tensor, target_target_positions: torch.Tensor):
         target_loss = self.auxiliary_loss_criterion(auxiliary_scores_target, target_target_positions.view(-1))
         return target_loss
@@ -264,17 +286,17 @@ class Model(nn.Module):
         return path
 
     def sample(self, batch_size: int, max_seq_len: int, commands_input: torch.LongTensor, commands_lengths: List[int],
-                     situations_input: torch.Tensor, target_batch: torch.LongTensor,
-                     sos_idx: int, eos_idx: int, data: torch.LongTensor = None) -> List[int]:
+               situations_input: torch.Tensor, target_batch: torch.LongTensor,
+               sos_idx: int, eos_idx: int, data: torch.LongTensor = None) -> List[int]:
         MC = True
         if data is None:
             MC = False
         else:
             batch_size, length = data.size()
-          
+
         encoded_input = self.encode_input(commands_input=commands_input,
-                                           commands_lengths=commands_lengths,
-                                           situations_input=situations_input)
+                                          commands_lengths=commands_lengths,
+                                          situations_input=situations_input)
 
         projected_keys_visual = self.visual_attention.key_layer(
             encoded_input["encoded_situations"])  # [bsz, situation_length, dec_hidden_dim]
@@ -283,7 +305,7 @@ class Model(nn.Module):
 
         hidden = self.attention_decoder.initialize_hidden(
             self.tanh(self.enc_hidden_to_dec_hidden(encoded_input["hidden_states"])))
-        token = torch.tensor([sos_idx]*batch_size, dtype=torch.long, device=device)
+        token = torch.tensor([sos_idx] * batch_size, dtype=torch.long, device=device)
         max_decoding_steps = 30
         decoding_iteration = 0
         output_sequence = []
@@ -296,10 +318,10 @@ class Model(nn.Module):
                 output_sequence.append(token.unsqueeze(0))
         else:
             (output, hidden, _, _, _) = self.decode_input(
-                    target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
-                    input_lengths=commands_lengths, encoded_situations=projected_keys_visual)        
+                target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
+                input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
             for i in range(length):
-                token = data[:,i]
+                token = data[:, i]
                 (output, hidden, _, _, _) = self.decode_input(
                     target_token=token, hidden=hidden, encoder_outputs=projected_keys_textual,
                     input_lengths=commands_lengths, encoded_situations=projected_keys_visual)
@@ -323,16 +345,13 @@ class Model(nn.Module):
         # [batch_size, max_seq_len]
         output_sequence = torch.cat(output_sequence, dim=0).T
         return output_sequence
-        
-    
+
     # TODO target length check
     def pred(self, commands_input: torch.LongTensor, commands_lengths: List[int], situations_input: torch.Tensor,
-                samples: torch.LongTensor, sample_lengths: List[int], sos_idx: int)-> torch.Tensor:
+             samples: torch.LongTensor, sample_lengths: List[int], sos_idx: int) -> torch.Tensor:
         """ return probability of each state action pair in log space """
         sos = torch.full((10, 1), sos_idx).type(torch.LongTensor).cuda()
         target_batch = torch.cat([sos, samples], dim=1)[:, :-1].contiguous()
 
-        logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, sample_lengths)     
+        logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, sample_lengths)
         return F.log_softmax(logits, dim=-1).max(dim=-1)[0]
-            
-        
