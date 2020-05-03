@@ -55,7 +55,7 @@ class Discriminator(nn.Module):
         """
 
         h = self.init_hidden(inp.size()[0])
-        out = self.forward(inp, h)
+        out = self.forward(inp)
         return out.view(-1)
 
     def batchBCELoss(self, inp, target):
