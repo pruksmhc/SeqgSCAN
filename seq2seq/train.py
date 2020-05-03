@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 import pickle
+from tqdm import tqdm
 def pretrain_discriminator(training_set, use_cuda, max_decoding_steps):
     device = torch.device(type='cuda') if use_cuda else torch.device(type='cpu')
     total_vocabulary = set(list(training_set.input_vocabulary._word_to_idx.keys()) + list(training_set.target_vocabulary._word_to_idx.keys()))
@@ -73,7 +74,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                        input_vocabulary_file=input_vocab_path,
                                        target_vocabulary_file=target_vocab_path,
                                        generate_vocabulary=generate_vocabularies, k=k)
-    training_set.read_dataset(max_examples=10,
+    training_set.read_dataset(max_examples=max_training_examples,
                               simple_situation_representation=simple_situation_representation)
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
@@ -139,7 +140,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     total_loss = 0
     total_acc = 0
     i = 0
-    for epoch in range(10):
+    for epoch in tqdm(range(10)):
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in training_set.get_data_iterator(
             batch_size=training_batch_size):
@@ -156,12 +157,13 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             sos_idx = training_set.input_vocabulary.sos_idx
             eos_idx = training_set.input_vocabulary.eos_idx
             data = target_scores
-            neg_sample = model.sample(data, commands_input, commands_lengths,
+            neg_sample = model.sample(target_scores.size(0), target_batch.size(1), commands_input, commands_lengths,
                                       situations_input, target_batch, sos_idx,
-                                      eos_idx, n=num)
+                                      eos_idx, data)
             target_batch = target_batch.numpy().tolist()
             label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
             label = [x for y in label for x in y]
+            neg_sample = neg_sample.numpy().tolist()
             target_batch.extend(neg_sample)
             # Now, let's randomly shuffle these up.
             exs = list(zip(target_batch, label))
@@ -198,7 +200,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             # Forward pass.
             # * probabilities over target vocabulary outputted by the model
-            samples = model.sample(batch_size=batch_size, length=max(target_lengths).astype(int), commands_input=input_batch, commands_lengths=input_lengths, 
+            samples = model.sample(batch_size=training_batch_size, length=max(target_lengths).astype(int), commands_input=input_batch, commands_lengths=input_lengths, 
                                     situations_input=situation_batch, target_batch=target_batch, sos_idx=training_set.input_vocabulary.sos_idx, eos_idx=training_set.input_vocabulary.eos_idx)
             reward = rollout.get_reward(samples, rollout_trails, input_batch, input_lengths, situation_batch, target_batch, training_set.input_vocabulary.sos_idx, training_set.input_vocabulary.eos_idx, reward_func)
             prob = model.pred(commands_input=input_batch, commands_lengths=input_lengths,
