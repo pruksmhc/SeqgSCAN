@@ -16,7 +16,7 @@ class Discriminator(nn.Module):
         self.gpu = gpu
 
         self.embeddings = nn.Embedding(vocab_size, embedding_dim)
-        self.gru = nn.GRU(embedding_dim, hidden_dim, num_layers=2, bidirectional=True, dropout=dropout)
+        self.gru = nn.LSTM(embedding_dim, hidden_dim, num_layers=2, bidirectional=True, dropout=dropout)
         self.gru2hidden = nn.Linear(2*2*hidden_dim, hidden_dim)
         self.dropout_linear = nn.Dropout(p=dropout)
         self.hidden2out = nn.Linear(hidden_dim, 1)
@@ -31,8 +31,12 @@ class Discriminator(nn.Module):
 
     def forward(self, input):
         # input dim         1000                                       # batch_size x seq_len
-        input = torch.Tensor(input)
-        emb = self.embeddings(input.long())                               # batch_size x seq_len x embedding_dim
+        try:
+             if not isinstance(input, torch.Tensor):
+                 input = torch.Tensor(input)
+             emb = self.embeddings(input.long())                               # batch_size x seq_len x embedding_dim
+        except:
+             import pdb; pdb.set_trace()
         out, _ = self.gru(emb)                        # 4 x batch_size x hidden_dim
         out = out[:, -1, 512:] # Get the last layer output of the GRU, get the output of the last token in GRU (since it's autoregressive)
         out = torch.tanh(out)
