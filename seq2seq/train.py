@@ -63,10 +63,9 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           encoder_hidden_size: int, learning_rate: float, adam_beta_1: float, adam_beta_2: float, lr_decay: float,
           lr_decay_steps: int, resume_from_file: str, max_training_iterations: int, output_directory: str,
           print_every: int, evaluate_every: int, conditional_attention: bool, auxiliary_task: bool,
-          weight_target_loss: float, attention_type: str, k: int, max_training_examples=None, seed=42, **kwargs):
+          weight_target_loss: float, attention_type: str, k: int, max_training_examples=None, rollout_trails=16, seed=42, **kwargs):
     device = torch.device(type='cuda') if use_cuda else torch.device(type='cpu')
     cfg = locals().copy()
-    print(cfg)
     torch.manual_seed(seed)
 
     logger.info("Loading Training set...")
@@ -199,13 +198,14 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             # Forward pass.
             # * probabilities over target vocabulary outputted by the model
-            target_scores, target_position_scores = model(commands_input=input_batch, commands_lengths=input_lengths,
-                                                          situations_input=situation_batch, target_batch=target_batch,
+            samples = model.sample(batch_size=batch_size, length=max(target_lengths).astype(int), commands_input=input_batch, commands_lengths=input_lengths, 
+                                    situations_input=situation_batch, target_batch=target_batch, sos_idx=training_set.input_vocabulary.sos_idx, eos_idx=training_set.input_vocabulary.eos_idx)
+            reward = rollout.get_reward(samples, rollout_trails, input_batch, input_lengths, situation_batch, target_batch, training_set.input_vocabulary.sos_idx, training_set.input_vocabulary.eos_idx, reward_func)
+            prob = model.pred(commands_input=input_batch, commands_lengths=input_lengths,
+                                                          situations_input=situation_batch, target_batch=samples,
                                                           target_lengths=target_lengths)
-            import pdb; pdb.set_trace()
-            reward = rollout.get_reward(target_scores, 16, input_batch, input_lengths, situation_batch, target_batch, training_set.input_vocabulary.sos_idx, training_set.input_vocabulary.eos_idx, reward_func)
-            
-            loss = model.get_loss(target_scores, target_batch)
+            # TODO policy gradient
+            loss = model.get_loss(reward, prob)
             if auxiliary_task:
                 target_loss = model.get_auxiliary_loss(target_position_scores, target_positions)
             else:
