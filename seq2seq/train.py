@@ -9,6 +9,7 @@ from seq2seq.gSCAN_dataset import GroundedScanDataset
 from seq2seq.helpers import log_parameters
 from seq2seq.evaluate import evaluate
 from seq2seq.discriminator import Discriminator
+
 logger = logging.getLogger(__name__)
 use_cuda = True if torch.cuda.is_available() else False
 import torch.nn as nn
@@ -25,6 +26,7 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
     total_loss = 0
     total_acc = 0
     i = 0
+    num_examples_seen = 0 
     for epoch in tqdm(range(10)):
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in tqdm(training_set.get_data_iterator(
@@ -50,6 +52,7 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
             label = [x for y in label for x in y]
             neg_sample = neg_sample.numpy().tolist()
             target_batch.extend(neg_sample)
+            num_examples_seen += len(target_batch)
             # Now, let's randomly shuffle these up.
             exs = list(zip(target_batch, label))
             import random
@@ -63,17 +66,19 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
             loss = loss_fn(out, label)
             loss.backward()
             dis_opt.step()
-
+           
             total_loss += loss.data.item()
             total_acc += torch.sum((out > 0.5) == (label > 0.5)).data.item()
-
-            if i % 500 == 0: # eVERY 500 STEPS, PRINT out.
-                print(' average_loss = %.4f, train_acc = %.4f' % (
-                    total_loss, total_acc))
+            if i % 500 == 0: # we print statistics every 500 steps
+                print_loss = float(total_loss) /  float(i) # divide by how many updates there were
+                print_acc = total_acc / float(num_examples_seen)
+                print('average_loss = %.4f, train_acc = %.4f' % (print_loss, print_acc))
                 torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
         training_set_size = len(training_set._examples)
         total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
         total_acc /= float(2 * training_set_size)
+        print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
+        torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
     torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
 
 
@@ -85,8 +90,9 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           encoder_hidden_size: int, learning_rate: float, adam_beta_1: float, adam_beta_2: float, lr_decay: float,
           lr_decay_steps: int, resume_from_file: str, max_training_iterations: int, output_directory: str,
           print_every: int, evaluate_every: int, conditional_attention: bool, auxiliary_task: bool,
-          weight_target_loss: float, attention_type: str, k: int, max_training_examples=None, rollout_trails=16, seed=42, **kwargs):
-    device = torch.device(type='cuda') if use_cuda else torch.device(type='cpu')
+          weight_target_loss: float, attention_type: str, k: int, max_training_examples=None, rollout_trails=16,
+          seed=42, **kwargs):
+    device = torch.device("cpu")
     cfg = locals().copy()
     torch.manual_seed(seed)
 
@@ -110,13 +116,13 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
     logger.info("Loading Dev. set...")
     ##::test_set = GroundedScanDataset(data_path, data_directory, split="dev",
-     #                              input_vocabulary_file=input_vocab_path,
-      #                             target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    #test_set.read_dataset(max_examples=10,
+    #                              input_vocabulary_file=input_vocab_path,
+    #                             target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
+    # test_set.read_dataset(max_examples=10,
     #                      simple_situation_representation=simple_situation_representation)
 
     # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
-    #test_set.shuffle_data()
+    # test_set.shuffle_data()
     logger.info("Done Loading Dev. set.")
     model = Model(input_vocabulary_size=training_set.input_vocabulary_size,
                   target_vocabulary_size=training_set.target_vocabulary_size,
@@ -125,9 +131,10 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                   target_pad_idx=training_set.target_vocabulary.pad_idx,
                   target_eos_idx=training_set.target_vocabulary.eos_idx,
                   **cfg)
-    total_vocabulary = set(list(training_set.input_vocabulary._word_to_idx.keys()) + list(training_set.target_vocabulary._word_to_idx.keys()))
+    total_vocabulary = set(list(training_set.input_vocabulary._word_to_idx.keys()) + list(
+        training_set.target_vocabulary._word_to_idx.keys()))
     total_vocabulary_size = len(total_vocabulary)
-    discriminator = Discriminator(300,  512, total_vocabulary_size, max_decoding_steps)
+    discriminator = Discriminator(300, 512, total_vocabulary_size, max_decoding_steps)
 
     model = model.cuda() if use_cuda else model
     discriminator = discriminator.cuda() if use_cuda else discriminator
@@ -136,8 +143,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     log_parameters(model)
     trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.Adam(trainable_parameters, lr=learning_rate, betas=(adam_beta_1, adam_beta_2))
-    scheduler = LambdaLR(optimizer,
-                         lr_lambda=lambda t: lr_decay ** (t / lr_decay_steps))
+    scheduler = LambdaLR(optimizer, lr_lambda=lambda t: lr_decay ** (t / lr_decay_steps))
 
     # Load model and vocabularies if resuming.
     start_iteration = 1
@@ -162,20 +168,43 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         training_set.shuffle_data()
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in training_set.get_data_iterator(
-                batch_size=training_batch_size):
+            batch_size=training_batch_size):
             is_best = False
             model.train()
 
             # Forward pass.
             # * probabilities over target vocabulary outputted by the model
-            samples = model.sample(batch_size=training_batch_size, length=max(target_lengths).astype(int), commands_input=input_batch, commands_lengths=input_lengths, 
-                                    situations_input=situation_batch, target_batch=target_batch, sos_idx=training_set.input_vocabulary.sos_idx, eos_idx=training_set.input_vocabulary.eos_idx)
-            reward = rollout.get_reward(samples, rollout_trails, input_batch, input_lengths, situation_batch, target_batch, training_set.input_vocabulary.sos_idx, training_set.input_vocabulary.eos_idx, reward_func)
-            prob = model.pred(commands_input=input_batch, commands_lengths=input_lengths,
-                                                          situations_input=situation_batch, target_batch=samples,
-                                                          target_lengths=target_lengths)
+            samples = model.sample(batch_size=training_batch_size,
+                                   max_seq_len=max(target_lengths).astype(int),
+                                   commands_input=input_batch, commands_lengths=input_lengths,
+                                   situations_input=situation_batch,
+                                   target_batch=target_batch,
+                                   sos_idx=training_set.input_vocabulary.sos_idx,
+                                   eos_idx=training_set.input_vocabulary.eos_idx)
+
+            rewards = rollout.get_reward(samples,
+                                         rollout_trails,
+                                         input_batch,
+                                         input_lengths,
+                                         situation_batch,
+                                         target_batch,
+                                         training_set.input_vocabulary.sos_idx,
+                                         training_set.input_vocabulary.eos_idx,
+                                         reward_func)
+            rewards = torch.exp(rewards).contiguous().view((-1,))
+            if use_cuda:
+                rewards = rewards.cuda()
+
+            prob = 1
+            # prob = model.pred(commands_input=input_batch,
+            #                         commands_lengths=input_lengths,
+            #                         situations_input=situation_batch,
+            #                         target_batch=samples,
+            #                         target_lengths=target_lengths)
+
             # TODO policy gradient
-            loss = model.get_loss(reward, prob)
+            loss = model.get_gan_loss(prob, targets, reward)
+
             if auxiliary_task:
                 target_loss = model.get_auxiliary_loss(target_position_scores, target_positions)
             else:

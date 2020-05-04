@@ -52,7 +52,7 @@ class Rollout(object):
                 rewards.append(pred)
             else:
                 rewards[seq_len-1] += pred
-        rewards = np.transpose(np.array(rewards)) / (1.0 * num) # batch_size * seq_len
+        rewards = torch.stack(rewards).squeeze().t() / (float(num)) # batch_size * seq_len
         return rewards
 
     def update_params(self):
