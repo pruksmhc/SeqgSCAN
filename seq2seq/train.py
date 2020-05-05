@@ -19,7 +19,7 @@ import pickle
 from tqdm import tqdm
 
 
-def train_discriminator(training_set, discriminator, training_batch_size, model):
+def pretrain_discriminators(training_set, discriminator, training_batch_size, model):
     new_dataset = []
     # all_val_examples
     # PRETRAIN DISCRIMINATOR
@@ -33,18 +33,32 @@ def train_discriminator(training_set, discriminator, training_batch_size, model)
              target_lengths, agent_positions, target_positions) in tqdm(training_set.get_data_iterator(
             batch_size=training_batch_size)):
             i += 1
+            target_scores, target_position_scores = model(commands_input=input_batch, commands_lengths=input_lengths,
+                                                          situations_input=situation_batch, target_batch=target_batch,
+                                                          target_lengths=target_lengths)
             # and then we sample from the generator
-            neg_sample = model.sample(batch_size=training_batch_size,
-                                   max_seq_len=max(target_lengths).astype(int),
-                                   commands_input=input_batch, commands_lengths=input_lengths,
-                                   situations_input=situation_batch,
-                                   target_batch=target_batch,
-                                   sos_idx=training_set.input_vocabulary.sos_idx,
-                                   eos_idx=training_set.input_vocabulary.eos_idx)
-            target_batch = target_batch.cpu().numpy().tolist()
+            target_scores = F.log_softmax(target_scores, dim=-1).max(dim=-1)[1].detach()[:, 1:]
+            num = 16
+            commands_input = input_batch
+            commands_lengths = input_lengths
+            situations_input = situation_batch
+            sos_idx = training_set.input_vocabulary.sos_idx
+            eos_idx = training_set.input_vocabulary.eos_idx
+            data = target_scores
+            neg_sample = model.sample(target_scores.size(0), target_batch.size(1), commands_input, commands_lengths,
+                                      situations_input, target_batch, sos_idx,
+                                      eos_idx, data)
+            if use_cuda:
+                target_batch = target_batch.cpu().numpy().tolist()
+            else:
+                target_batch = target_batch.numpy().tolist()
             label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
             label = [x for y in label for x in y]
-            neg_sample = neg_sample.cpu().numpy().tolist()
+            if use_cuda:
+                neg_sample = neg_sample.cpu().numpy().tolist()
+            else:
+                neg_sample = neg_sample.numpy().tolist()
+
             target_batch.extend(neg_sample)
             num_examples_seen += len(target_batch)
             # Now, let's randomly shuffle these up.
@@ -54,8 +68,8 @@ def train_discriminator(training_set, discriminator, training_batch_size, model)
             dis_opt.zero_grad()
             target_batch, label = zip(*exs)
             target_batch = torch.Tensor(target_batch)
-            label = torch.Tensor(label).cuda()
-            out = discriminator.batchClassify(target_batch.long())  
+            label = torch.Tensor(label)
+            out = discriminator.batchClassify(target_batch)  # POSITIVES FIRST
             loss_fn = nn.BCELoss()
             loss = loss_fn(out, label)
             loss.backward()
@@ -70,12 +84,11 @@ def train_discriminator(training_set, discriminator, training_batch_size, model)
                 torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
         training_set_size = len(training_set._examples)
         total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
-        total_acc /= float(2 * num_examples_seen)
-        if total_acc > 1.0:
-             import pdb; pdb.set_trace()
+        total_acc /= float(2 * training_set_size)
         print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
         torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
     torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
+
 
 def train(data_path: str, data_directory: str, generate_vocabularies: bool, input_vocab_path: str,
           target_vocab_path: str, embedding_dimension: int, num_encoder_layers: int, encoder_dropout_p: float,
@@ -85,8 +98,11 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           encoder_hidden_size: int, learning_rate: float, adam_beta_1: float, adam_beta_2: float, lr_decay: float,
           lr_decay_steps: int, resume_from_file: str, max_training_iterations: int, output_directory: str,
           print_every: int, evaluate_every: int, conditional_attention: bool, auxiliary_task: bool,
-          weight_target_loss: float, attention_type: str, k: int, max_training_examples=None, rollout_trails=16,
-          seed=42, **kwargs):
+          weight_target_loss: float, attention_type: str, k: int, seed=42,
+          max_training_examples=None, rollout_trails=16,  # SeqGAN params
+          disc_emb_dim=300, disc_hid_dim=512, rollout_update_rate=0.8,  # SeqGAN params
+          path_to_gen_file='.', path_to_disc='.',  # SeqGAN params
+          **kwargs):
     device = torch.device("cpu")
     cfg = locals().copy()
     torch.manual_seed(seed)
@@ -96,7 +112,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                        input_vocabulary_file=input_vocab_path,
                                        target_vocabulary_file=target_vocab_path,
                                        generate_vocabulary=generate_vocabularies, k=k)
-    training_set.read_dataset(max_examples=2,
+    training_set.read_dataset(max_examples=max_training_examples,
                               simple_situation_representation=simple_situation_representation)
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
@@ -110,32 +126,34 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         logger.info("Saved vocabularies to {} for input and {} for target.".format(input_vocab_path, target_vocab_path))
 
     logger.info("Loading Dev. set...")
-    ##::test_set = GroundedScanDataset(data_path, data_directory, split="dev",
-    #                              input_vocabulary_file=input_vocab_path,
-    #                             target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    # test_set.read_dataset(max_examples=10,
-    #                      simple_situation_representation=simple_situation_representation)
+    test_set = GroundedScanDataset(data_path, data_directory, split="dev",
+                                   input_vocabulary_file=input_vocab_path,
+                                   target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
+    test_set.read_dataset(max_examples=10,
+                          simple_situation_representation=simple_situation_representation)
 
     # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
-    # test_set.shuffle_data()
+    test_set.shuffle_data()
+
     logger.info("Done Loading Dev. set.")
-    model = Model(input_vocabulary_size=training_set.input_vocabulary_size,
-                  target_vocabulary_size=training_set.target_vocabulary_size,
-                  num_cnn_channels=training_set.image_channels,
-                  input_padding_idx=training_set.input_vocabulary.pad_idx,
-                  target_pad_idx=training_set.target_vocabulary.pad_idx,
-                  target_eos_idx=training_set.target_vocabulary.eos_idx,
-                  **cfg)
+    generator = Model(input_vocabulary_size=training_set.input_vocabulary_size,
+                      target_vocabulary_size=training_set.target_vocabulary_size,
+                      num_cnn_channels=training_set.image_channels,
+                      input_padding_idx=training_set.input_vocabulary.pad_idx,
+                      target_pad_idx=training_set.target_vocabulary.pad_idx,
+                      target_eos_idx=training_set.target_vocabulary.eos_idx,
+                      **cfg)
     total_vocabulary = set(list(training_set.input_vocabulary._word_to_idx.keys()) + list(
         training_set.target_vocabulary._word_to_idx.keys()))
     total_vocabulary_size = len(total_vocabulary)
-    discriminator = Discriminator(300, 512, total_vocabulary_size, max_decoding_steps)
+    discriminator = Discriminator(embedding_dim=disc_emb_dim, hidden_dim=disc_hid_dim,
+                                  vocab_size=total_vocabulary_size, max_seq_len=max_decoding_steps)
 
-    model = model.cuda() if use_cuda else model
+    generator = generator.cuda() if use_cuda else generator
     discriminator = discriminator.cuda() if use_cuda else discriminator
-    rollout = Rollout(model, 0.8)
-    log_parameters(model)
-    trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    rollout = Rollout(generator, rollout_update_rate)
+    log_parameters(generator)
+    trainable_parameters = [parameter for parameter in generator.parameters() if parameter.requires_grad]
     optimizer = torch.optim.Adam(trainable_parameters, lr=learning_rate, betas=(adam_beta_1, adam_beta_2))
     scheduler = LambdaLR(optimizer, lr_lambda=lambda t: lr_decay ** (t / lr_decay_steps))
 
@@ -148,12 +166,16 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     if resume_from_file:
         assert os.path.isfile(resume_from_file), "No checkpoint found at {}".format(resume_from_file)
         logger.info("Loading checkpoint from file at '{}'".format(resume_from_file))
-        optimizer_state_dict = model.load_model(resume_from_file)
+        optimizer_state_dict = generator.load_model(resume_from_file)
         optimizer.load_state_dict(optimizer_state_dict)
-        start_iteration = model.trained_iterations
+        start_iteration = generator.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    train_discriminator(training_set, discriminator, training_batch_size, model) 
+    print('Load pretrained generator weights')
+    generator.load_state_dict(torch.load(os.path.join(path_to_gen_file, 'generator_weights')))
+
+    print('Pretraining Discriminator....')
+    pretrain_discriminators(training_set, discriminator, training_batch_size, model)
     logger.info("Training starts..")
     training_iteration = start_iteration
     torch.autograd.set_detect_anomaly(True)
@@ -163,20 +185,21 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         training_set.shuffle_data()
 
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
-             target_lengths, agent_positions, target_positions) in training_set.get_data_iterator(
-            batch_size=training_batch_size):
+             target_lengths, agent_positions, target_positions) in \
+                training_set.get_data_iterator(batch_size=training_batch_size):
 
             is_best = False
-            model.train()
+            generator.train()
+
             # Forward pass.
             # * probabilities over target vocabulary outputted by the model
-            samples = model.sample(batch_size=training_batch_size,
-                                   max_seq_len=max(target_lengths).astype(int),
-                                   commands_input=input_batch, commands_lengths=input_lengths,
-                                   situations_input=situation_batch,
-                                   target_batch=target_batch,
-                                   sos_idx=training_set.input_vocabulary.sos_idx,
-                                   eos_idx=training_set.input_vocabulary.eos_idx)
+            samples = generator.sample(batch_size=training_batch_size,
+                                       max_seq_len=max(target_lengths).astype(int),
+                                       commands_input=input_batch, commands_lengths=input_lengths,
+                                       situations_input=situation_batch,
+                                       target_batch=target_batch,
+                                       sos_idx=training_set.input_vocabulary.sos_idx,
+                                       eos_idx=training_set.input_vocabulary.eos_idx)
 
             rewards = rollout.get_reward(samples,
                                          rollout_trails,
@@ -195,52 +218,47 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                 rewards = rewards.cuda()
 
             # prob = 1
-            prob = model.pred(commands_input=input_batch,
-                              commands_lengths=input_lengths,
-                              situations_input=situation_batch,
-                              samples=samples,
-                              sample_lengths=target_lengths,
-                              sos_idx=training_set.input_vocabulary.sos_idx)
+            target_scores = generator.get_normalized_logits(commands_input=input_batch,
+                                                            commands_lengths=input_lengths,
+                                                            situations_input=situation_batch,
+                                                            samples=samples,
+                                                            sample_lengths=target_lengths,
+                                                            sos_idx=training_set.input_vocabulary.sos_idx)
 
+            loss = generator.get_gan_loss(target_scores, target_batch, rewards)
 
-
-
-            # TODO policy gradient
-            loss = model.get_gan_loss(prob, target_batch, rewards)
-
-            if auxiliary_task:
-                target_loss = model.get_auxiliary_loss(target_position_scores, target_positions)
-            else:
-                target_loss = 0
-            loss += weight_target_loss * target_loss
+            # if auxiliary_task:
+            #     target_loss = model.get_auxiliary_loss(target_position_scores, target_positions)
+            # else:
+            #     target_loss = 0
+            # loss += weight_target_loss * target_loss
 
             # Backward pass and update model parameters.
             loss.backward()
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
-            model.update_state(is_best=is_best)
-
+            generator.update_state(is_best=is_best)
 
             # Print current metrics.
             if training_iteration % print_every == 0:
-                accuracy, exact_match = model.get_metrics(target_scores, target_batch)
-                if auxiliary_task:
-                    auxiliary_accuracy_target = model.get_auxiliary_accuracy(target_position_scores, target_positions)
-                else:
-                    auxiliary_accuracy_target = 0.
+                accuracy, exact_match = generator.get_metrics(target_scores, target_batch)
+                # if auxiliary_task:
+                #     auxiliary_accuracy_target = generator.get_auxiliary_accuracy(target_position_scores,
+                #                                                                  target_positions)
+                # else:
+                #     auxiliary_accuracy_target = 0.
                 learning_rate = scheduler.get_lr()[0]
                 logger.info("Iteration %08d, loss %8.4f, accuracy %5.2f, exact match %5.2f, learning_rate %.5f,"
-                            " aux. accuracy target pos %5.2f" % (training_iteration, loss, accuracy, exact_match,
-                                                                 learning_rate, auxiliary_accuracy_target))
+                            % (training_iteration, loss, accuracy, exact_match, learning_rate))
 
             # Evaluate on test set.
             if training_iteration % evaluate_every == 0:
                 with torch.no_grad():
-                    model.eval()
+                    generator.eval()
                     logger.info("Evaluating..")
                     accuracy, exact_match, target_accuracy = evaluate(
-                        test_set.get_data_iterator(batch_size=1), model=model,
+                        test_set.get_data_iterator(batch_size=1), model=generator,
                         max_decoding_steps=max_decoding_steps, pad_idx=test_set.target_vocabulary.pad_idx,
                         sos_idx=test_set.target_vocabulary.sos_idx,
                         eos_idx=test_set.target_vocabulary.eos_idx,
@@ -251,11 +269,11 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                         is_best = True
                         best_accuracy = accuracy
                         best_exact_match = exact_match
-                        model.update_state(accuracy=accuracy, exact_match=exact_match, is_best=is_best)
+                        generator.update_state(accuracy=accuracy, exact_match=exact_match, is_best=is_best)
                     file_name = "checkpoint.pth.tar".format(str(training_iteration))
                     if is_best:
-                        model.save_checkpoint(file_name=file_name, is_best=is_best,
-                                              optimizer_state_dict=optimizer.state_dict())
+                        generator.save_checkpoint(file_name=file_name, is_best=is_best,
+                                                  optimizer_state_dict=optimizer.state_dict())
 
             rollout.update_params()
 

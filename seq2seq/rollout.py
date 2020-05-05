@@ -38,6 +38,7 @@ class Rollout(object):
                 samples = self.g_beta.sample(batch_size, seq_len, commands_input, commands_lengths, 
                                              situations_input, target_batch, sos_idx, eos_idx, data)
                 pred = discriminator(samples)
+                # pred = discriminator(samples)
                 # pred = pred.numpy()
                 if i == 0:
                     rewards.append(pred)

@@ -349,13 +349,13 @@ class Model(nn.Module):
         return output_sequence
 
     # TODO target length check
-    def pred(self, commands_input: torch.LongTensor, commands_lengths: List[int], situations_input: torch.Tensor,
-             samples: torch.LongTensor, sample_lengths: List[int], sos_idx: int) -> torch.Tensor:
+    def get_normalized_logits(self, commands_input: torch.LongTensor, commands_lengths: List[int],
+                              situations_input: torch.Tensor, samples: torch.LongTensor, sample_lengths: List[int],
+                              sos_idx: int) -> torch.Tensor:
         """ return probability of each state action pair in log space """
         sos = torch.full((samples.shape[0], 1), sos_idx).type(torch.LongTensor).cuda()
         target_batch = torch.cat([sos, samples], dim=1)[:, :-1].contiguous()
 
         logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, sample_lengths)
         return F.softmax(torch.exp(logits), dim=-1).view((-1, logits.shape[-1]))
-        # return F.log_softmax(logits, dim=-1).max(dim=-1)[0]
 
