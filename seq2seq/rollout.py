@@ -42,15 +42,15 @@ class Rollout(object):
                 if i == 0:
                     rewards.append(pred)
                 else:
-                    rewards[l-1] += pred
-
+                    rewards[l-1] = rewards[l-1] + pred
+           
             # for the last token
             pred = discriminator(x)
             # pred = pred.numpy()
             if i == 0:
                 rewards.append(pred)
             else:
-                rewards[seq_len-1] += pred
+                rewards[seq_len-1] = rewards[seq_len - 1] + pred
         rewards = torch.stack(rewards).squeeze().t() / (float(num)) # batch_size * seq_len
         return rewards
 

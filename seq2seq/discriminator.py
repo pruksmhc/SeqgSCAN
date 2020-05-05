@@ -35,22 +35,22 @@ class Discriminator(nn.Module):
         # input dim         1000                                       # batch_size x seq_len
         # try:
         if not isinstance(input, torch.Tensor):
-            input = torch.Tensor(input)
+            input = torch.Tensor(input).long()
         if self.gpu:
             input = input.cuda()
         # batch_size x seq_len x embedding_dim
-        emb = self.embeddings(input.long())
+        emb = self.embeddings(input)
         # except:
         #      import pdb; pdb.set_trace()
 
         out, _ = self.gru(emb)  # 4 x batch_size x hidden_dim
-        out = out[:, -1,
+        out_last = out[:, -1,
               512:]  # Get the last layer output of the GRU, get the output of the last token in GRU (since it's autoregressive)
-        out = torch.tanh(out)
-        out = self.dropout_linear(out)
-        out = self.hidden2out(out)  # batch_size x 1
-        out = torch.sigmoid(out)
-        return out
+        out_last = torch.tanh(out_last)
+        out_last = self.dropout_linear(out_last)
+        out_last = self.hidden2out(out_last)  # batch_size x 1
+        out_last = torch.sigmoid(out_last)
+        return out_last
 
     def batchClassify(self, inp):
         """

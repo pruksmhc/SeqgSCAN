@@ -47,10 +47,10 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
             neg_sample = model.sample(target_scores.size(0), target_batch.size(1), commands_input, commands_lengths,
                                       situations_input, target_batch, sos_idx,
                                       eos_idx, data)
-            target_batch = target_batch.numpy().tolist()
+            target_batch = target_batch.cpu().numpy().tolist()
             label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
             label = [x for y in label for x in y]
-            neg_sample = neg_sample.numpy().tolist()
+            neg_sample = neg_sample.cpu().numpy().tolist()
             target_batch.extend(neg_sample)
             num_examples_seen += len(target_batch)
             # Now, let's randomly shuffle these up.
@@ -63,12 +63,12 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
             label = torch.Tensor(label)
             out = discriminator.batchClassify(target_batch) # POSITIVES FIRST
             loss_fn = nn.BCELoss()
-            loss = loss_fn(out, label)
+            loss = loss_fn(out, label.cuda())
             loss.backward()
             dis_opt.step()
            
             total_loss += loss.data.item()
-            total_acc += torch.sum((out > 0.5) == (label > 0.5)).data.item()
+            total_acc += torch.sum((out > 0.5) == (label.cuda() > 0.5)).data.item()
             if i % 500 == 0: # we print statistics every 500 steps
                 print_loss = float(total_loss) /  float(i) # divide by how many updates there were
                 print_acc = total_acc / float(num_examples_seen)
@@ -101,7 +101,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                        input_vocabulary_file=input_vocab_path,
                                        target_vocabulary_file=target_vocab_path,
                                        generate_vocabulary=generate_vocabularies, k=k)
-    training_set.read_dataset(max_examples=max_training_examples,
+    training_set.read_dataset(max_examples=2,
                               simple_situation_representation=simple_situation_representation)
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
@@ -158,7 +158,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         start_iteration = model.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    pretrain_discriminators(training_set, discriminator, training_batch_size, model) 
+    #pretrain_discriminators(training_set, discriminator, training_batch_size, model) 
     logger.info("Training starts..")
     training_iteration = start_iteration
     torch.autograd.set_detect_anomaly(True)
@@ -173,7 +173,6 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             is_best = False
             model.train()
-
             # Forward pass.
             # * probabilities over target vocabulary outputted by the model
             samples = model.sample(batch_size=training_batch_size,
