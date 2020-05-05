@@ -18,7 +18,8 @@ import math
 import pickle
 from tqdm import tqdm
 
-def pretrain_discriminators(training_set, discriminator, training_batch_size, model):
+
+def train_discriminator(training_set, discriminator, training_batch_size, model):
     new_dataset = []
     # all_val_examples
     # PRETRAIN DISCRIMINATOR
@@ -26,27 +27,20 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
     total_loss = 0
     total_acc = 0
     i = 0
-    num_examples_seen = 0 
+    num_examples_seen = 0
     for epoch in tqdm(range(10)):
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in tqdm(training_set.get_data_iterator(
             batch_size=training_batch_size)):
             i += 1
-            target_scores, target_position_scores = model(commands_input=input_batch, commands_lengths=input_lengths,
-                                                          situations_input=situation_batch, target_batch=target_batch,
-                                                          target_lengths=target_lengths)
             # and then we sample from the generator
-            target_scores = F.log_softmax(target_scores, dim=-1).max(dim=-1)[1].detach()[:,1:]
-            num = 16
-            commands_input = input_batch
-            commands_lengths = input_lengths
-            situations_input = situation_batch
-            sos_idx = training_set.input_vocabulary.sos_idx
-            eos_idx = training_set.input_vocabulary.eos_idx
-            data = target_scores
-            neg_sample = model.sample(target_scores.size(0), target_batch.size(1), commands_input, commands_lengths,
-                                      situations_input, target_batch, sos_idx,
-                                      eos_idx, data)
+            neg_sample = model.sample(batch_size=training_batch_size,
+                                   max_seq_len=max(target_lengths).astype(int),
+                                   commands_input=input_batch, commands_lengths=input_lengths,
+                                   situations_input=situation_batch,
+                                   target_batch=target_batch,
+                                   sos_idx=training_set.input_vocabulary.sos_idx,
+                                   eos_idx=training_set.input_vocabulary.eos_idx)
             target_batch = target_batch.cpu().numpy().tolist()
             label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
             label = [x for y in label for x in y]
@@ -60,17 +54,17 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
             dis_opt.zero_grad()
             target_batch, label = zip(*exs)
             target_batch = torch.Tensor(target_batch)
-            label = torch.Tensor(label)
-            out = discriminator.batchClassify(target_batch) # POSITIVES FIRST
+            label = torch.Tensor(label).cuda()
+            out = discriminator.batchClassify(target_batch.long())  
             loss_fn = nn.BCELoss()
-            loss = loss_fn(out, label.cuda())
+            loss = loss_fn(out, label)
             loss.backward()
             dis_opt.step()
-           
+
             total_loss += loss.data.item()
-            total_acc += torch.sum((out > 0.5) == (label.cuda() > 0.5)).data.item()
-            if i % 500 == 0: # we print statistics every 500 steps
-                print_loss = float(total_loss) /  float(i) # divide by how many updates there were
+            total_acc += torch.sum((out > 0.5) == (label > 0.5)).data.item()
+            if i % 500 == 0:  # we print statistics every 500 steps
+                print_loss = float(total_loss) / float(i)  # divide by how many updates there were
                 print_acc = total_acc / float(num_examples_seen)
                 print('average_loss = %.4f, train_acc = %.4f' % (print_loss, print_acc))
                 torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
@@ -80,7 +74,6 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
         print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
         torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
     torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
-
 
 def train(data_path: str, data_directory: str, generate_vocabularies: bool, input_vocab_path: str,
           target_vocab_path: str, embedding_dimension: int, num_encoder_layers: int, encoder_dropout_p: float,
@@ -158,7 +151,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         start_iteration = model.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    #pretrain_discriminators(training_set, discriminator, training_batch_size, model) 
+    train_discriminator(training_set, discriminator, training_batch_size, model) 
     logger.info("Training starts..")
     training_iteration = start_iteration
     torch.autograd.set_detect_anomaly(True)
