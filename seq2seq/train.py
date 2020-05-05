@@ -19,64 +19,67 @@ import pickle
 from tqdm import tqdm
 
 
-
-def train_discriminator(training_set, discriminator, training_batch_size, model):
-    new_dataset = []
-    # all_val_examples
-    # PRETRAIN DISCRIMINATOR
+def train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs):
+    # PRE-TRAIN DISCRIMINATOR
     dis_opt = optim.Adagrad(discriminator.parameters())
     total_loss = 0
     total_acc = 0
-    i = 0
+    i = 1
     num_examples_seen = 0
-    for epoch in tqdm(range(10)):
-        for (input_batch, input_lengths, _, situation_batch, _, target_batch,
-             target_lengths, agent_positions, target_positions) in tqdm(training_set.get_data_iterator(
-            batch_size=training_batch_size)):
-            i += 1
+    for _ in tqdm(range(epochs)):
+        for (input_batch, input_lengths, _, situation_batch, _, positive_samples,
+             target_lengths, agent_positions, target_positions) in \
+                tqdm(training_set.get_data_iterator(batch_size=training_batch_size)):
             # and then we sample from the generator
-            neg_sample = model.sample(batch_size=training_batch_size,
-                                   max_seq_len=max(target_lengths).astype(int),
-                                   commands_input=input_batch, commands_lengths=input_lengths,
-                                   situations_input=situation_batch,
-                                   target_batch=target_batch,
-                                   sos_idx=training_set.input_vocabulary.sos_idx,
-                                   eos_idx=training_set.input_vocabulary.eos_idx)
-            target_batch = target_batch.cpu().numpy().tolist()
-            label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
-            label = [x for y in label for x in y]
-            neg_sample = neg_sample.cpu().numpy().tolist()
-            target_batch.extend(neg_sample)
+            neg_samples = generator.sample(batch_size=training_batch_size,
+                                           max_seq_len=max(target_lengths).astype(int),
+                                           commands_input=input_batch, commands_lengths=input_lengths,
+                                           target_batch=positive_samples,
+                                           situations_input=situation_batch,
+                                           sos_idx=training_set.input_vocabulary.sos_idx,
+                                           eos_idx=training_set.input_vocabulary.eos_idx
+                                           )
+
+            positive_samples = positive_samples.cpu().numpy().tolist()
+            neg_samples = neg_samples.cpu().numpy().tolist()
+            labels = [[1] * len(positive_samples)] + [[0] * len(neg_samples)]
+            labels = [x for y in labels for x in y]
+            target_batch = positive_samples + neg_samples
             num_examples_seen += len(target_batch)
             # Now, let's randomly shuffle these up.
-            exs = list(zip(target_batch, label))
+            exs = list(zip(target_batch, labels))
             import random
+            random.seed(seed)
             random.shuffle(exs)
             dis_opt.zero_grad()
-            target_batch, label = zip(*exs)
+            target_batch, labels = zip(*exs)
             target_batch = torch.Tensor(target_batch)
-            label = torch.Tensor(label).cuda()
+            if use_cuda:
+                labels = torch.Tensor(labels).cuda()
+            else:
+                labels = torch.Tensor(labels)
             out = discriminator.batchClassify(target_batch.long())
             loss_fn = nn.BCELoss()
-            loss = loss_fn(out, label)
+            loss = loss_fn(out, labels)
             loss.backward()
             dis_opt.step()
 
             total_loss += loss.data.item()
-            total_acc += torch.sum((out > 0.5) == (label > 0.5)).data.item()
+            total_acc += torch.sum((out > 0.5) == (labels > 0.5)).data.item()
             if i % 500 == 0:  # we print statistics every 500 steps
                 print_loss = float(total_loss) / float(i)  # divide by how many updates there were
                 print_acc = total_acc / float(num_examples_seen)
                 print('average_loss = %.4f, train_acc = %.4f' % (print_loss, print_acc))
                 torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
+
         training_set_size = len(training_set._examples)
         total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
         total_acc /= float(2 * num_examples_seen)
         if total_acc > 1.0:
-             import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
         print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
         torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
-    torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
 
 
 def train(data_path: str, data_directory: str, generate_vocabularies: bool, input_vocab_path: str,
@@ -164,9 +167,10 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     generator_weights = torch.load('../models/generator_weights.pth.tar')
     generator.load_state_dict(generator_weights['state_dict'])
 
+    pretrain_disc = True
     if pretrain_disc:
         print('Pretraining Discriminator....')
-        pretrain_discriminators(training_set, discriminator, training_batch_size, generator)
+        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10)
     else:
         print('Loading Discriminator....')
         discriminator_weights = torch.load('../models/pretrained_discriminator.ckpt')
@@ -263,14 +267,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             rollout.update_params()
 
-            for _ in range(DISC_TRAIN_STEPS):
-                samples = generator.sample(batch_size=training_batch_size,
-                                           max_seq_len=max(target_lengths).astype(int),
-                                           commands_input=input_batch, commands_lengths=input_lengths,
-                                           situations_input=situation_batch,
-                                           target_batch=target_batch,
-                                           sos_idx=training_set.input_vocabulary.sos_idx,
-                                           eos_idx=training_set.input_vocabulary.eos_idx)
+            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10)
 
             training_iteration += 1
             if training_iteration > max_training_iterations:
