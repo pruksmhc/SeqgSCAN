@@ -14,50 +14,72 @@ logger = logging.getLogger(__name__)
 use_cuda = True if torch.cuda.is_available() else False
 import torch.nn as nn
 import torch.optim as optim
-
+import math
 import pickle
 from tqdm import tqdm
 
-
-def pretrain_discriminator(training_set, use_cuda, max_decoding_steps):
-    device = torch.device(type='cuda') if use_cuda else torch.device(type='cpu')
-    total_vocabulary = set(list(training_set.input_vocabulary._word_to_idx.keys()) + list(
-        training_set.target_vocabulary._word_to_idx.keys()))
-    total_vocabulary_size = len(total_vocabulary)
-    discriminator = Discriminator(300, 512, total_vocabulary_size, max_decoding_steps)
-    batch_size = 16
-    pretraining_dataset = pickle.load(open("new_dataset", "rb"))
-    val_pretraining_dataset = pickle.load(open("val_dataset", "rb"))
-    _, val_inp, val_target = zip(*val_pretraining_dataset)
-    epochs = 10
-    dis_opt = optim.Adagrad(dis.parameters())
-    d_step = 0
-    for epoch in range(epochs):
-        print('d-step epoch %d : ' % (epoch + 1), end='')
-        total_loss = 0
-        total_acc = 0
-        for i in range(len(pretraining_dataset), batch_size):
-            batch = pretraining_dataset[i: i + batch_size]
-            input_command, target_command, label = zip(*batch.unzip)
+def pretrain_discriminators(training_set, discriminator, training_batch_size, model):
+    new_dataset = []
+    # all_val_examples
+    # PRETRAIN DISCRIMINATOR
+    dis_opt = optim.Adagrad(discriminator.parameters())
+    total_loss = 0
+    total_acc = 0
+    i = 0
+    num_examples_seen = 0 
+    for epoch in tqdm(range(10)):
+        for (input_batch, input_lengths, _, situation_batch, _, target_batch,
+             target_lengths, agent_positions, target_positions) in tqdm(training_set.get_data_iterator(
+            batch_size=training_batch_size)):
+            i += 1
+            target_scores, target_position_scores = model(commands_input=input_batch, commands_lengths=input_lengths,
+                                                          situations_input=situation_batch, target_batch=target_batch,
+                                                          target_lengths=target_lengths)
+            # and then we sample from the generator
+            target_scores = F.log_softmax(target_scores, dim=-1).max(dim=-1)[1].detach()[:,1:]
+            num = 16
+            commands_input = input_batch
+            commands_lengths = input_lengths
+            situations_input = situation_batch
+            sos_idx = training_set.input_vocabulary.sos_idx
+            eos_idx = training_set.input_vocabulary.eos_idx
+            data = target_scores
+            neg_sample = model.sample(target_scores.size(0), target_batch.size(1), commands_input, commands_lengths,
+                                      situations_input, target_batch, sos_idx,
+                                      eos_idx, data)
+            target_batch = target_batch.numpy().tolist()
+            label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
+            label = [x for y in label for x in y]
+            neg_sample = neg_sample.numpy().tolist()
+            target_batch.extend(neg_sample)
+            num_examples_seen += len(target_batch)
+            # Now, let's randomly shuffle these up.
+            exs = list(zip(target_batch, label))
+            import random
+            random.shuffle(exs)
             dis_opt.zero_grad()
-            out = discriminator.batchClassify(target_command)
+            target_batch, label = zip(*exs)
+            target_batch = torch.Tensor(target_batch)
+            label = torch.Tensor(label)
+            out = discriminator.batchClassify(target_batch) # POSITIVES FIRST
             loss_fn = nn.BCELoss()
             loss = loss_fn(out, label)
             loss.backward()
             dis_opt.step()
-
+           
             total_loss += loss.data.item()
             total_acc += torch.sum((out > 0.5) == (label > 0.5)).data.item()
-
-        total_loss /= (len(pretraining_dataset) / batch_size)
-        total_acc /= len(pretraining_dataset)
-
-        val_pred = discriminator.batchClassify(val_inp)
-        print(' average_loss = %.4f, train_acc = %.4f, val_acc = %.4f' % (
-            total_loss, total_acc, torch.sum((val_pred > 0.5) == (val_target > 0.5)).data.item() / 200.))
-
-    # Then we save the model weights
-    torch.save(discriminator, open("trained_discriminator_weights"))
+            if i % 500 == 0: # we print statistics every 500 steps
+                print_loss = float(total_loss) /  float(i) # divide by how many updates there were
+                print_acc = total_acc / float(num_examples_seen)
+                print('average_loss = %.4f, train_acc = %.4f' % (print_loss, print_acc))
+                torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
+        training_set_size = len(training_set._examples)
+        total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
+        total_acc /= float(2 * training_set_size)
+        print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
+        torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
+    torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
 
 
 def train(data_path: str, data_directory: str, generate_vocabularies: bool, input_vocab_path: str,
@@ -70,7 +92,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           print_every: int, evaluate_every: int, conditional_attention: bool, auxiliary_task: bool,
           weight_target_loss: float, attention_type: str, k: int, max_training_examples=None, rollout_trails=16,
           seed=42, **kwargs):
-    device = torch.device(type='cuda' if use_cuda else torch.device(type='cpu'))
+    device = torch.device("cpu")
     cfg = locals().copy()
     torch.manual_seed(seed)
 
@@ -136,63 +158,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         start_iteration = model.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    new_dataset = []
-    # all_val_examples
-    # PRETRAIN DISCRIMINATOR
-
-    dis_opt = optim.Adagrad(discriminator.parameters())
-    total_loss = 0
-    total_acc = 0
-    i = 0
-    NUM_P_EPOCHS = 1
-    for epoch in tqdm(range(NUM_P_EPOCHS)):
-        for (input_batch, input_lengths, _, situation_batch, _, target_batch,
-             target_lengths, agent_positions, target_positions) in training_set.get_data_iterator(
-            batch_size=training_batch_size):
-            i += 1
-            target_scores, target_position_scores = model(commands_input=input_batch, commands_lengths=input_lengths,
-                                                          situations_input=situation_batch, target_batch=target_batch,
-                                                          target_lengths=target_lengths)
-            # and then we sample from the generator
-            target_scores = F.log_softmax(target_scores, dim=-1).max(dim=-1)[1].detach()[:, 1:]
-            num = 16
-            commands_input = input_batch
-            commands_lengths = input_lengths
-            situations_input = situation_batch
-            sos_idx = training_set.input_vocabulary.sos_idx
-            eos_idx = training_set.input_vocabulary.eos_idx
-            data = target_scores
-            neg_sample = model.sample(target_scores.size(0), target_batch.size(1), commands_input, commands_lengths,
-                                      situations_input, target_batch, sos_idx,
-                                      eos_idx, data)
-            target_batch = target_batch.cpu().numpy().tolist()
-            label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
-            label = [x for y in label for x in y]
-            neg_sample = neg_sample.cpu().numpy().tolist()
-            target_batch.extend(neg_sample)
-            # Now, let's randomly shuffle these up.
-            exs = list(zip(target_batch, label))
-            import random
-            random.shuffle(exs)
-            dis_opt.zero_grad()
-            target_batch, label = zip(*exs)
-            target_batch = torch.Tensor(target_batch)
-            label = torch.Tensor(label)
-            if use_cuda:
-                label = label.cuda()
-            out = discriminator.batchClassify(target_batch)  # POSITIVES FIRST
-            loss_fn = nn.BCELoss()
-            loss = loss_fn(out, label)
-            loss.backward()
-            dis_opt.step()
-
-            total_loss += loss.data.item()
-            total_acc += torch.sum((out > 0.5) == (label > 0.5)).data.item()
-            if i % 500 == 0:  # eVERY 500 STEPS, PRINT out.
-                print(' average_loss = %.4f, train_acc = %.4f' % (
-                    total_loss, total_acc))
-    torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
-
+    pretrain_discriminators(training_set, discriminator, training_batch_size, model) 
     logger.info("Training starts..")
     training_iteration = start_iteration
     torch.autograd.set_detect_anomaly(True)
