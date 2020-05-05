@@ -116,7 +116,6 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
     model = model.cuda() if use_cuda else model
     discriminator = discriminator.cuda() if use_cuda else discriminator
-    reward_func = lambda x: discriminator(x)
     rollout = Rollout(model, 0.8)
     log_parameters(model)
     trainable_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad]
@@ -196,13 +195,16 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
     logger.info("Training starts..")
     training_iteration = start_iteration
+    torch.autograd.set_detect_anomaly(True)
     while training_iteration < max_training_iterations:
 
         # Shuffle the dataset and loop over it.
         training_set.shuffle_data()
+
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in training_set.get_data_iterator(
             batch_size=training_batch_size):
+
             is_best = False
             model.train()
 
@@ -224,20 +226,27 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                          target_batch,
                                          training_set.input_vocabulary.sos_idx,
                                          training_set.input_vocabulary.eos_idx,
-                                         reward_func)
+                                         discriminator)
+
+            assert samples.shape == rewards.shape
+
             rewards = torch.exp(rewards).contiguous().view((-1,))
             if use_cuda:
                 rewards = rewards.cuda()
 
-            prob = 1
-            # prob = model.pred(commands_input=input_batch,
-            #                         commands_lengths=input_lengths,
-            #                         situations_input=situation_batch,
-            #                         target_batch=samples,
-            #                         target_lengths=target_lengths)
+            # prob = 1
+            prob = model.pred(commands_input=input_batch,
+                              commands_lengths=input_lengths,
+                              situations_input=situation_batch,
+                              samples=samples,
+                              sample_lengths=target_lengths,
+                              sos_idx=training_set.input_vocabulary.sos_idx)
+
+
+
 
             # TODO policy gradient
-            loss = model.get_gan_loss(prob, targets, reward)
+            loss = model.get_gan_loss(prob, target_batch, rewards)
 
             if auxiliary_task:
                 target_loss = model.get_auxiliary_loss(target_position_scores, target_positions)
@@ -251,6 +260,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             scheduler.step()
             optimizer.zero_grad()
             model.update_state(is_best=is_best)
+
 
             # Print current metrics.
             if training_iteration % print_every == 0:
@@ -286,6 +296,8 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                     if is_best:
                         model.save_checkpoint(file_name=file_name, is_best=is_best,
                                               optimizer_state_dict=optimizer.state_dict())
+
+            rollout.update_params()
 
             training_iteration += 1
             if training_iteration > max_training_iterations:

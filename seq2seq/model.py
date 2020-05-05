@@ -169,19 +169,20 @@ class Model(nn.Module):
                targets : (N, ), torch Variable
                rewards : (N, ), torch Variable
            """
-        N = targets.size(0)
+        N = prob.size(0)
         C = prob.size(1)
         one_hot = torch.zeros((N, C))
         if prob.is_cuda:
             one_hot = one_hot.cuda()
         one_hot.scatter_(1, targets.data.view((-1, 1)), 1)
-        one_hot = one_hot.type(torch.ByteTensor)
+        one_hot = one_hot.type(torch.bool)
         one_hot = torch.autograd.Variable(one_hot)
         if prob.is_cuda:
             one_hot = one_hot.cuda()
         loss = torch.masked_select(prob, one_hot)
         loss = loss * rewards
-        loss = -torch.sum(loss)
+        loss = torch.sum(loss)
+        # loss = -torch.sum(loss)
         return loss
 
     def get_auxiliary_loss(self, auxiliary_scores_target: torch.Tensor, target_target_positions: torch.Tensor):
@@ -225,6 +226,7 @@ class Model(nn.Module):
                                                                               encoded_commands=encoded_commands,
                                                                               commands_lengths=command_lengths,
                                                                               encoded_situations=encoded_situations)
+        # decoder_output_batched = F.softmax(decoder_output_batched, dim=-1)
         decoder_output_batched = F.log_softmax(decoder_output_batched, dim=-1)
         return decoder_output_batched, context_situation
 
@@ -350,8 +352,10 @@ class Model(nn.Module):
     def pred(self, commands_input: torch.LongTensor, commands_lengths: List[int], situations_input: torch.Tensor,
              samples: torch.LongTensor, sample_lengths: List[int], sos_idx: int) -> torch.Tensor:
         """ return probability of each state action pair in log space """
-        sos = torch.full((10, 1), sos_idx).type(torch.LongTensor).cuda()
+        sos = torch.full((samples.shape[0], 1), sos_idx).type(torch.LongTensor).cuda()
         target_batch = torch.cat([sos, samples], dim=1)[:, :-1].contiguous()
 
         logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, sample_lengths)
-        return F.log_softmax(logits, dim=-1).max(dim=-1)[0]
+        return F.softmax(torch.exp(logits), dim=-1).view((-1, logits.shape[-1]))
+        # return F.log_softmax(logits, dim=-1).max(dim=-1)[0]
+
