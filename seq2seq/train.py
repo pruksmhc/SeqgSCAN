@@ -19,7 +19,8 @@ import pickle
 from tqdm import tqdm
 
 
-def pretrain_discriminators(training_set, discriminator, training_batch_size, model):
+
+def train_discriminator(training_set, discriminator, training_batch_size, model):
     new_dataset = []
     # all_val_examples
     # PRETRAIN DISCRIMINATOR
@@ -33,32 +34,18 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
              target_lengths, agent_positions, target_positions) in tqdm(training_set.get_data_iterator(
             batch_size=training_batch_size)):
             i += 1
-            target_scores, target_position_scores = model(commands_input=input_batch, commands_lengths=input_lengths,
-                                                          situations_input=situation_batch, target_batch=target_batch,
-                                                          target_lengths=target_lengths)
             # and then we sample from the generator
-            target_scores = F.log_softmax(target_scores, dim=-1).max(dim=-1)[1].detach()[:, 1:]
-            num = 16
-            commands_input = input_batch
-            commands_lengths = input_lengths
-            situations_input = situation_batch
-            sos_idx = training_set.input_vocabulary.sos_idx
-            eos_idx = training_set.input_vocabulary.eos_idx
-            data = target_scores
-            neg_sample = model.sample(target_scores.size(0), target_batch.size(1), commands_input, commands_lengths,
-                                      situations_input, target_batch, sos_idx,
-                                      eos_idx, data)
-            if use_cuda:
-                target_batch = target_batch.cpu().numpy().tolist()
-            else:
-                target_batch = target_batch.numpy().tolist()
+            neg_sample = model.sample(batch_size=training_batch_size,
+                                   max_seq_len=max(target_lengths).astype(int),
+                                   commands_input=input_batch, commands_lengths=input_lengths,
+                                   situations_input=situation_batch,
+                                   target_batch=target_batch,
+                                   sos_idx=training_set.input_vocabulary.sos_idx,
+                                   eos_idx=training_set.input_vocabulary.eos_idx)
+            target_batch = target_batch.cpu().numpy().tolist()
             label = [[1] * len(target_batch)] + [[0] * len(neg_sample)]
             label = [x for y in label for x in y]
-            if use_cuda:
-                neg_sample = neg_sample.cpu().numpy().tolist()
-            else:
-                neg_sample = neg_sample.numpy().tolist()
-
+            neg_sample = neg_sample.cpu().numpy().tolist()
             target_batch.extend(neg_sample)
             num_examples_seen += len(target_batch)
             # Now, let's randomly shuffle these up.
@@ -68,8 +55,8 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
             dis_opt.zero_grad()
             target_batch, label = zip(*exs)
             target_batch = torch.Tensor(target_batch)
-            label = torch.Tensor(label)
-            out = discriminator.batchClassify(target_batch)  # POSITIVES FIRST
+            label = torch.Tensor(label).cuda()
+            out = discriminator.batchClassify(target_batch.long())
             loss_fn = nn.BCELoss()
             loss = loss_fn(out, label)
             loss.backward()
@@ -84,7 +71,9 @@ def pretrain_discriminators(training_set, discriminator, training_batch_size, mo
                 torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
         training_set_size = len(training_set._examples)
         total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
-        total_acc /= float(2 * training_set_size)
+        total_acc /= float(2 * num_examples_seen)
+        if total_acc > 1.0:
+             import pdb; pdb.set_trace()
         print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
         torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
     torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
