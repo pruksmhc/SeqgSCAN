@@ -101,7 +101,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           weight_target_loss: float, attention_type: str, k: int, seed=42,
           max_training_examples=None, rollout_trails=16,  # SeqGAN params
           disc_emb_dim=300, disc_hid_dim=512, rollout_update_rate=0.8,  # SeqGAN params
-          path_to_gen_file='.', path_to_disc='.',  # SeqGAN params
+          path_to_gen_file='.', pretrain_disc=False, path_to_disc='.',  # SeqGAN params
           **kwargs):
     device = torch.device("cpu")
     cfg = locals().copy()
@@ -172,10 +172,17 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
     print('Load pretrained generator weights')
-    generator.load_state_dict(torch.load(os.path.join(path_to_gen_file, 'generator_weights')))
+    generator_weights = torch.load('../models/generator_weights.pth.tar')
+    generator.load_state_dict(generator_weights['state_dict'])
 
-    print('Pretraining Discriminator....')
-    pretrain_discriminators(training_set, discriminator, training_batch_size, model)
+    if pretrain_disc:
+        print('Pretraining Discriminator....')
+        pretrain_discriminators(training_set, discriminator, training_batch_size, generator)
+    else:
+        print('Loading Discriminator....')
+        discriminator_weights = torch.load('../models/pretrained_discriminator.ckpt')
+        discriminator.load_state_dict(discriminator_weights)
+
     logger.info("Training starts..")
     training_iteration = start_iteration
     torch.autograd.set_detect_anomaly(True)
@@ -192,7 +199,6 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             generator.train()
 
             # Forward pass.
-            # * probabilities over target vocabulary outputted by the model
             samples = generator.sample(batch_size=training_batch_size,
                                        max_seq_len=max(target_lengths).astype(int),
                                        commands_input=input_batch, commands_lengths=input_lengths,
@@ -213,11 +219,12 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             assert samples.shape == rewards.shape
 
+            # calculate rewards
             rewards = torch.exp(rewards).contiguous().view((-1,))
             if use_cuda:
                 rewards = rewards.cuda()
 
-            # prob = 1
+            # get generator scores for sequence
             target_scores = generator.get_normalized_logits(commands_input=input_batch,
                                                             commands_lengths=input_lengths,
                                                             situations_input=situation_batch,
@@ -225,13 +232,8 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                                             sample_lengths=target_lengths,
                                                             sos_idx=training_set.input_vocabulary.sos_idx)
 
+            # calculate loss on the generated sequence given the rewards
             loss = generator.get_gan_loss(target_scores, target_batch, rewards)
-
-            # if auxiliary_task:
-            #     target_loss = model.get_auxiliary_loss(target_position_scores, target_positions)
-            # else:
-            #     target_loss = 0
-            # loss += weight_target_loss * target_loss
 
             # Backward pass and update model parameters.
             loss.backward()
@@ -243,11 +245,6 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             # Print current metrics.
             if training_iteration % print_every == 0:
                 accuracy, exact_match = generator.get_metrics(target_scores, target_batch)
-                # if auxiliary_task:
-                #     auxiliary_accuracy_target = generator.get_auxiliary_accuracy(target_position_scores,
-                #                                                                  target_positions)
-                # else:
-                #     auxiliary_accuracy_target = 0.
                 learning_rate = scheduler.get_lr()[0]
                 logger.info("Iteration %08d, loss %8.4f, accuracy %5.2f, exact match %5.2f, learning_rate %.5f,"
                             % (training_iteration, loss, accuracy, exact_match, learning_rate))
@@ -276,6 +273,15 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                                   optimizer_state_dict=optimizer.state_dict())
 
             rollout.update_params()
+
+            for _ in range(DISC_TRAIN_STEPS):
+                samples = generator.sample(batch_size=training_batch_size,
+                                           max_seq_len=max(target_lengths).astype(int),
+                                           commands_input=input_batch, commands_lengths=input_lengths,
+                                           situations_input=situation_batch,
+                                           target_batch=target_batch,
+                                           sos_idx=training_set.input_vocabulary.sos_idx,
+                                           eos_idx=training_set.input_vocabulary.eos_idx)
 
             training_iteration += 1
             if training_iteration > max_training_iterations:
