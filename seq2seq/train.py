@@ -19,7 +19,7 @@ import pickle
 from tqdm import tqdm
 
 
-def train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs):
+def train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs, name):
     # PRE-TRAIN DISCRIMINATOR
     dis_opt = optim.Adagrad(discriminator.parameters())
     total_loss = 0
@@ -70,7 +70,7 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
                 print_loss = float(total_loss) / float(i)  # divide by how many updates there were
                 print_acc = total_acc / float(num_examples_seen)
                 print('average_loss = %.4f, train_acc = %.4f' % (print_loss, print_acc))
-                torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
+                torch.save(discriminator.state_dict(), "%s.ckpt" % name)
 
         training_set_size = len(training_set._examples)
         total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
@@ -79,7 +79,7 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
             import pdb
             pdb.set_trace()
         print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
-        torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
+        torch.save(discriminator.state_dict(), "%s.ckpt"% name)
 
 
 def train(data_path: str, data_directory: str, generate_vocabularies: bool, input_vocab_path: str,
@@ -170,10 +170,10 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     pretrain_disc = True
     if pretrain_disc:
         print('Pretraining Discriminator....')
-        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10)
+        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10, name="pretrained_discriminator")
     else:
         print('Loading Discriminator....')
-        discriminator_weights = torch.load('../models/pretrained_discriminator.ckpt')
+        discriminator_weights = torch.load('pretrained_discriminator.ckpt')
         discriminator.load_state_dict(discriminator_weights)
 
     logger.info("Training starts..")
@@ -267,8 +267,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             rollout.update_params()
 
-            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10)
-
+            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10, name="training_discriminator")
             training_iteration += 1
             if training_iteration > max_training_iterations:
                 break
