@@ -17,19 +17,24 @@ import torch.optim as optim
 import math
 import pickle
 from tqdm import tqdm
+import random
 
 
 def train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs, name):
+    random.seed(seed)
+    loss_fn = nn.BCELoss()
     # PRE-TRAIN DISCRIMINATOR
-    dis_opt = optim.Adagrad(discriminator.parameters())
-    total_loss = 0
-    total_acc = 0
-    i = 1
-    num_examples_seen = 0
+    # TODO any specific reason for using AdaGrad?
+    dis_opt = optim.Adam(discriminator.parameters())
     for _ in tqdm(range(epochs)):
+        total_loss = 0
+        total_acc = 0
+        i = 0
+        num_examples_seen = 0
         for (input_batch, input_lengths, _, situation_batch, _, positive_samples,
              target_lengths, agent_positions, target_positions) in \
                 tqdm(training_set.get_data_iterator(batch_size=training_batch_size)):
+            i += 1
             # and then we sample from the generator
             neg_samples = generator.sample(batch_size=len(input_batch),
                                            max_seq_len=max(target_lengths).astype(int),
@@ -48,10 +53,7 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
             num_examples_seen += len(target_batch)
             # Now, let's randomly shuffle these up.
             exs = list(zip(target_batch, labels))
-            import random
-            random.seed(seed)
             random.shuffle(exs)
-            dis_opt.zero_grad()
             target_batch, labels = zip(*exs)
             target_batch = torch.Tensor(target_batch)
             if use_cuda:
@@ -59,8 +61,8 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
             else:
                 labels = torch.Tensor(labels)
             out = discriminator.batchClassify(target_batch.long())
-            loss_fn = nn.BCELoss()
             loss = loss_fn(out, labels)
+            dis_opt.zero_grad()
             loss.backward()
             dis_opt.step()
 
@@ -74,12 +76,56 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
 
         training_set_size = len(training_set._examples)
         total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
-        total_acc /= float(num_examples_seen) 
+        total_acc /= float(num_examples_seen)
         if total_acc > 1.0:
             import pdb
             pdb.set_trace()
-        print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
-        torch.save(discriminator.state_dict(), "%s.ckpt"% name)
+        print('average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
+        torch.save(discriminator.state_dict(), "{}.ckpt".format(name))
+
+
+def pre_train_generator(training_set, training_batch_size, generator, seed, epochs, name):
+    random.seed(seed)
+    gen_opt = optim.Adam(generator.parameters())
+    loss_fn = nn.NLLLoss(reduction='sum')
+    for _ in tqdm(range(epochs)):
+        total_loss = 0
+        total_words = 0
+        i = 0
+        for (input_batch, input_lengths, _, situation_batch, _, target_batch,
+             target_lengths, agent_positions, target_positions) in \
+                tqdm(training_set.get_data_iterator(batch_size=training_batch_size)):
+            i += 1
+            if use_cuda:
+                input_batch, target_batch = input_batch.cuda(), target_batch.cuda()
+
+            samples = generator.sample(batch_size=len(input_batch),
+                                       max_seq_len=max(target_lengths).astype(int),
+                                       commands_input=input_batch, commands_lengths=input_lengths,
+                                       situations_input=situation_batch,
+                                       target_batch=target_batch,
+                                       sos_idx=training_set.input_vocabulary.sos_idx,
+                                       eos_idx=training_set.input_vocabulary.eos_idx)
+
+            pred = generator.get_normalized_logits(commands_input=input_batch,
+                                                   commands_lengths=input_lengths,
+                                                   situations_input=situation_batch,
+                                                   samples=samples,
+                                                   sample_lengths=target_lengths,
+                                                   sos_idx=training_set.input_vocabulary.sos_idx)
+            target = target_batch.contiguous().view(-1)
+
+            loss = loss_fn(pred, target)
+            total_loss += loss.item()
+            total_words += pred.size(0) * pred.size(1)
+            gen_opt.zero_grad()
+            loss.backward()
+            gen_opt.step()
+
+        print('Pretraining Gen Loss = {:.6f}'.format(math.exp(total_loss / total_words)))
+        torch.save(generator.state_dict(), "{}.ckpt".format(name))
+
+    # return
 
 
 def train(data_path: str, data_directory: str, generate_vocabularies: bool, input_vocab_path: str,
@@ -91,9 +137,12 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           lr_decay_steps: int, resume_from_file: str, max_training_iterations: int, output_directory: str,
           print_every: int, evaluate_every: int, conditional_attention: bool, auxiliary_task: bool,
           weight_target_loss: float, attention_type: str, k: int, seed=42,
-          max_training_examples=None, rollout_trails=16,  # SeqGAN params
-          disc_emb_dim=300, disc_hid_dim=512, rollout_update_rate=0.8,  # SeqGAN params
-          path_to_gen_file='.', pretrain_disc=False, path_to_disc='.',  # SeqGAN params
+          # SeqGAN params begin
+          max_training_examples=None, rollout_trails=16,
+          disc_emb_dim=300, disc_hid_dim=512, rollout_update_rate=0.8,
+          pretrain_gen=True, path_to_gen_file='.',
+          pretrain_disc=True, path_to_disc='.',
+          # SeqGAN params end
           **kwargs):
     device = torch.device("cpu")
     cfg = locals().copy()
@@ -163,14 +212,23 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         start_iteration = generator.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    print('Load pretrained generator weights')
-    generator_weights = torch.load('../models/generator_weights.pth.tar')
-    generator.load_state_dict(generator_weights['state_dict'])
+    # pretrain_gen = False
+    if pretrain_gen:
+        print('Pretraining generator with MLE...')
+        pre_train_generator(training_set, training_batch_size, generator, seed, epochs=10,
+                            name='pretrained_generator.ckpt')
+    else:
+        print('Load pretrained generator weights')
+        generator_weights = torch.load('../models/generator_weights.pth.tar')
+        generator.load_state_dict(generator_weights['state_dict'])
 
-    pretrain_disc = True
+    # TODO change main function to pass appropriate parameters
+    # TODO remove the following line
+    # pretrain_disc = False
     if pretrain_disc:
         print('Pretraining Discriminator....')
-        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10, name="pretrained_discriminator")
+        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10,
+                            name="pretrained_discriminator")
     else:
         print('Loading Discriminator....')
         discriminator_weights = torch.load('pretrained_discriminator.ckpt')
@@ -267,7 +325,8 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             rollout.update_params()
 
-            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10, name="training_discriminator")
+            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10,
+                                name="training_discriminator")
             training_iteration += 1
             if training_iteration > max_training_iterations:
                 break
