@@ -98,6 +98,19 @@ parser.add_argument("--conditional_attention", dest="conditional_attention", def
                          " used.")
 parser.add_argument("--no_conditional_attention", dest="conditional_attention", default=False, action="store_false")
 
+# SeqGAN arguments
+parser.add_argument("--rollout_trails", type=int, default=16)
+parser.add_argument("--rollout_update_rate", type=float, default=0.8)
+parser.add_argument('--disc_emb_dim', type=int, default=300, help="Embedding space dimensions in discriminator")
+parser.add_argument("--disc_hid_dim", type=int, default=512, help="Hidden units dimensions in discriminator")
+parser.add_argument("--pretrain_gen_path", default=None, type=str, help="If specified loads the generator weights from"
+                                            "the given path. Must be a cpkt file. Otherwise, pretrains the generator")
+parser.add_argument("--pretrain_disc_path", default=None, type=str,
+                    help="If specified loads the discriminator weights from the given path. Must be a cpkt file."
+                         "Otherwise pretrains the discriminator.")
+parser.add_argument("--pretrain_gen_epochs", type=int, default=1000)
+parser.add_argument("--pretrain_disc_epochs", type=int, default=1000)
+
 # Other arguments
 parser.add_argument("--seed", type=int, default=42)
 
@@ -152,7 +165,8 @@ def main(flags):
             model = model.cuda() if use_cuda else model
 
             # Load model and vocabularies if resuming.
-            assert os.path.isfile(flags["resume_from_file"]), "No checkpoint found at {}".format(flags["resume_from_file"])
+            assert os.path.isfile(flags["resume_from_file"]), "No checkpoint found at {}".format(
+                flags["resume_from_file"])
             logger.info("Loading checkpoint from file at '{}'".format(flags["resume_from_file"]))
             model.load_model(flags["resume_from_file"])
             start_iteration = model.trained_iterations

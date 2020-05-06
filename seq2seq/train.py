@@ -136,13 +136,14 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           encoder_hidden_size: int, learning_rate: float, adam_beta_1: float, adam_beta_2: float, lr_decay: float,
           lr_decay_steps: int, resume_from_file: str, max_training_iterations: int, output_directory: str,
           print_every: int, evaluate_every: int, conditional_attention: bool, auxiliary_task: bool,
-          weight_target_loss: float, attention_type: str, k: int, seed=42,
+          weight_target_loss: float, attention_type: str, k: int,
           # SeqGAN params begin
-          max_training_examples=None, rollout_trails=16,
-          disc_emb_dim=300, disc_hid_dim=512, rollout_update_rate=0.8,
-          pretrain_gen=True, path_to_gen_file='.',
-          pretrain_disc=True, path_to_disc='.',
+          pretrain_gen_path, pretrain_gen_epochs,
+          pretrain_disc_path, pretrain_disc_epochs,
+          max_training_examples, rollout_trails,
+          disc_emb_dim, disc_hid_dim, rollout_update_rate,
           # SeqGAN params end
+          seed=42,
           **kwargs):
     device = torch.device("cpu")
     cfg = locals().copy()
@@ -212,26 +213,22 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         start_iteration = generator.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    # pretrain_gen = False
-    if pretrain_gen:
+    if pretrain_gen_path is None:
         print('Pretraining generator with MLE...')
-        pre_train_generator(training_set, training_batch_size, generator, seed, epochs=10,
-                            name='pretrained_generator.ckpt')
+        pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
+                            name='pretrained_generator')
     else:
         print('Load pretrained generator weights')
-        generator_weights = torch.load('../models/generator_weights.pth.tar')
+        generator_weights = torch.load(pretrain_gen_path)
         generator.load_state_dict(generator_weights['state_dict'])
 
-    # TODO change main function to pass appropriate parameters
-    # TODO remove the following line
-    # pretrain_disc = False
-    if pretrain_disc:
+    if pretrain_disc_path is None:
         print('Pretraining Discriminator....')
-        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10,
+        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
                             name="pretrained_discriminator")
     else:
         print('Loading Discriminator....')
-        discriminator_weights = torch.load('pretrained_discriminator.ckpt')
+        discriminator_weights = torch.load(pretrain_disc_path)
         discriminator.load_state_dict(discriminator_weights)
 
     logger.info("Training starts..")
