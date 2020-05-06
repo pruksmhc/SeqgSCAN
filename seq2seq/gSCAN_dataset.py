@@ -221,7 +221,7 @@ class GroundedScanDataset(object):
                    torch.cat(situation_batch, dim=0), situation_representation_batch, torch.cat(target_batch, dim=0),
                    target_lengths, torch.cat(agent_positions_batch, dim=0), torch.cat(target_positions_batch, dim=0))
 
-    def read_dataset(self, max_examples=None, simple_situation_representation=True) -> {}:
+    def read_dataset(self, max_examples=None, simple_situation_representation=True, load_tensors_from_file=False) -> {}:
         """
         Loop over the data examples in GroundedScan and convert them to tensors, also save the lengths
         for input and target sequences that are needed for padding.
@@ -229,7 +229,10 @@ class GroundedScanDataset(object):
         :param simple_situation_representation: whether to read the full situation image in RGB or the simplified
         smaller representation.
         """
+        import progressbar
         logger.info("Converting dataset to tensors...")
+        widgets = [progressbar.Percentage(), progressbar.Bar(), progressbar.ETA()]
+        bar = progressbar.ProgressBar(widgets=widgets, maxval=397933).start()
         for i, example in enumerate(self.dataset.get_examples_with_image(self.split, simple_situation_representation)):
             if max_examples:
                 if len(self._examples) > max_examples:
@@ -242,6 +245,17 @@ class GroundedScanDataset(object):
             if i == 0:
                 self.image_dimensions = situation_image.shape[0]
                 self.image_channels = situation_image.shape[-1]
+                # TODO remove
+                if load_tensors_from_file:
+                    print('Loading tensors from file')
+                    tensors = torch.load('../models/compositional_split_tensors_train.pkl')
+                    # tensors = torch.load('absolutepath/to/compositional_split_tensors_train.pkl')
+                    self._input_lengths = tensors['input_lengths']
+                    self._target_lengths = tensors['target_lengths']
+                    self._examples = tensors['examples']
+                    print('Loaded tensors from file')
+                    break
+
             situation_repr = example["situation_representation"]
             input_array = self.sentence_to_array(input_commands, vocabulary="input")
             target_array = self.sentence_to_array(target_commands, vocabulary="target")
@@ -267,6 +281,14 @@ class GroundedScanDataset(object):
             self._input_lengths = np.append(self._input_lengths, [len(input_array)])
             self._target_lengths = np.append(self._target_lengths, [len(target_array)])
             self._examples = np.append(self._examples, [empty_example])
+            i += 1
+            bar.update(i)
+        bar.finish()
+        # TODO to be removed
+        # torch.save({
+        #     'input_lengths': self._input_lengths,
+        #     'target_lengths': self._target_lengths,
+        #     'examples': self._examples}, open('compositionality_split_tensors.pkl', 'wb'))
 
     def sentence_to_array(self, sentence: List[str], vocabulary: str) -> List[int]:
         """

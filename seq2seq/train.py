@@ -125,8 +125,6 @@ def pre_train_generator(training_set, training_batch_size, generator, seed, epoc
         print('Pretraining Gen Loss = {:.6f}'.format(math.exp(total_loss / total_words)))
         torch.save(generator.state_dict(), "{}.ckpt".format(name))
 
-    # return
-
 
 def train(data_path: str, data_directory: str, generate_vocabularies: bool, input_vocab_path: str,
           target_vocab_path: str, embedding_dimension: int, num_encoder_layers: int, encoder_dropout_p: float,
@@ -150,12 +148,15 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     torch.manual_seed(seed)
 
     logger.info("Loading Training set...")
+
     training_set = GroundedScanDataset(data_path, data_directory, split="train",
                                        input_vocabulary_file=input_vocab_path,
                                        target_vocabulary_file=target_vocab_path,
                                        generate_vocabulary=generate_vocabularies, k=k)
     training_set.read_dataset(max_examples=max_training_examples,
-                              simple_situation_representation=simple_situation_representation)
+                              simple_situation_representation=simple_situation_representation,
+                              load_tensors_from_file=True) # set this to False if no pickle file available
+
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
     logger.info("  Input vocabulary size training set: {}".format(training_set.input_vocabulary_size))
@@ -171,7 +172,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     test_set = GroundedScanDataset(data_path, data_directory, split="dev",
                                    input_vocabulary_file=input_vocab_path,
                                    target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    test_set.read_dataset(max_examples=10,
+    test_set.read_dataset(max_examples=None,
                           simple_situation_representation=simple_situation_representation)
 
     # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
@@ -213,14 +214,14 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         start_iteration = generator.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    if pretrain_gen_path is None:
-        print('Pretraining generator with MLE...')
-        pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
-                            name='pretrained_generator')
-    else:
-        print('Load pretrained generator weights')
-        generator_weights = torch.load(pretrain_gen_path)
-        generator.load_state_dict(generator_weights['state_dict'])
+    # if pretrain_gen_path is None:
+    #     print('Pretraining generator with MLE...')
+    #     pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
+    #                         name='pretrained_generator')
+    # else:
+    #     print('Load pretrained generator weights')
+    #     generator_weights = torch.load(pretrain_gen_path)
+    #     generator.load_state_dict(generator_weights['state_dict'])
 
     if pretrain_disc_path is None:
         print('Pretraining Discriminator....')
