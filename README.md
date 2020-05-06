@@ -3,6 +3,10 @@
 This repository contains a multi-modal neural sequence-to-sequence model with a CNN to parse a world state and joint attention over input instruction sequences and world states.
 This model is detailed in the grounded SCAN paper, and graphically depicted in the image in ![model_image](https://raw.githubusercontent.com/groundedSCAN/multimodal_neural_gsCAN/master/documentation/model_bahdanau.png)
 
+Go to __main__.py folder and run this command 
+
+```python3 __main__.py --mode=train --data_directory="../demo_dataset" --output_directory='out' --attention_type=bahdanau --max_training_iterations=20000```
+
 ## TL;DR
 
 Find all commands to reproduce the experiments in `all_experiments.sh` containing the used parameters and seeds.
