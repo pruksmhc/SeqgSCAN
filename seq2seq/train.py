@@ -27,14 +27,14 @@ def train_discriminator(training_set, discriminator, training_batch_size, model)
     total_loss = 0
     total_acc = 0
     i = 0
-    num_examples_seen = 0
     for epoch in tqdm(range(10)):
+        num_examples_seen = 0
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in tqdm(training_set.get_data_iterator(
             batch_size=training_batch_size)):
             i += 1
             # and then we sample from the generator
-            neg_sample = model.sample(batch_size=training_batch_size,
+            neg_sample = model.sample(batch_size=len(input_batch),
                                    max_seq_len=max(target_lengths).astype(int),
                                    commands_input=input_batch, commands_lengths=input_lengths,
                                    situations_input=situation_batch,
@@ -70,7 +70,7 @@ def train_discriminator(training_set, discriminator, training_batch_size, model)
                 torch.save(discriminator.state_dict(), "pretrained_discriminator.ckpt")
         training_set_size = len(training_set._examples)
         total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
-        total_acc /= float(2 * num_examples_seen)
+        total_acc /= float(num_examples_seen) 
         if total_acc > 1.0:
              import pdb; pdb.set_trace()
         print(' average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
@@ -96,7 +96,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                        input_vocabulary_file=input_vocab_path,
                                        target_vocabulary_file=target_vocab_path,
                                        generate_vocabulary=generate_vocabularies, k=k)
-    training_set.read_dataset(max_examples=2,
+    training_set.read_dataset(max_examples=max_training_examples,
                               simple_situation_representation=simple_situation_representation)
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
