@@ -258,6 +258,12 @@ class GroundedScanDataset(object):
                         self._input_lengths = self._input_lengths[:max_examples]
                         self._target_lengths = self._target_lengths[:max_examples]
                         self._examples = self._examples[:max_examples]
+                    indices = np.arange(len(self._examples))
+                    import random
+                    random.shuffle(indices)
+                    self._input_lengths = self._input_lengths[indices]
+                    self._target_lengths = self._target_lengths[indices]
+                    self._examples = self._examples[indices]
                     break
 
             situation_repr = example["situation_representation"]
