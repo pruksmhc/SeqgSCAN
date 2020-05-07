@@ -109,7 +109,7 @@ parser.add_argument("--pretrain_disc_path", default=None, type=str,
                     help="If specified loads the discriminator weights from the given path. Must be a cpkt file."
                          "Otherwise pretrains the discriminator.")
 parser.add_argument("--pretrain_gen_epochs", type=int, default=1000)
-parser.add_argument("--pretrain_disc_epochs", type=int, default=1000)
+parser.add_argument("--pretrain_disc_epochs", type=int, default=10)
 
 # Other arguments
 parser.add_argument("--seed", type=int, default=42)

@@ -2,7 +2,7 @@
 # Compositional Generalization Experiments
 # Baseline
 # Training
-python3.7 -m seq2seq --mode=train --max_decoding_steps=120 --max_testing_examples=2000 --data_directory=data/compositional_splits --attention_type=bahdanau --no_auxiliary_task --conditional_attention --output_directory=adverb_k_1_run_3 --training_batch_size=200 --max_training_iterations=200000 --seed=66
+python3.7 -m seq2seq --mode=train --max_training_examples=20000 --max_decoding_steps=120 --max_testing_examples=2000 --data_directory=data/compositional_splits --attention_type=bahdanau --no_auxiliary_task --conditional_attention --output_directory=adverb_k_1_run_3 --training_batch_size=200 --max_training_iterations=200000 --seed=66 --pretrain_gen_epochs=10 --pretrain_disc_epochs=10
 python3.7 -m seq2seq --mode=train --max_decoding_steps=120 --max_testing_examples=2000 --data_directory=data/compositional_splits --attention_type=bahdanau --no_auxiliary_task --conditional_attention --output_directory=adverb_k_1_run_4 --training_batch_size=200 --max_training_iterations=200000 --seed=49
 python3.7 -m seq2seq --mode=train --max_decoding_steps=120 --max_testing_examples=2000 --data_directory=data/compositional_splits --attention_type=bahdanau --no_auxiliary_task --conditional_attention --output_directory=adverb_k_1_run_5 --training_batch_size=200 --max_training_iterations=200000 --seed=50
 

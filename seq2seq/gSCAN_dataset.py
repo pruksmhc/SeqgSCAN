@@ -254,6 +254,10 @@ class GroundedScanDataset(object):
                     self._target_lengths = tensors['target_lengths']
                     self._examples = tensors['examples']
                     print('Loaded tensors from file')
+                    if max_examples:
+                        self._input_lengths = self._input_lengths[:max_examples]
+                        self._target_lengths = self._target_lengths[:max_examples]
+                        self._examples = self._examples[:max_examples]
                     break
 
             situation_repr = example["situation_representation"]
