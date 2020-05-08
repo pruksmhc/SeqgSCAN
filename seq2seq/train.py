@@ -215,14 +215,14 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         start_iteration = generator.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
 
-    # if pretrain_gen_path is None:
-    #     print('Pretraining generator with MLE...')
-    #     pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
-    #                         name='pretrained_generator')
-    # else:
-    #     print('Load pretrained generator weights')
-    #     generator_weights = torch.load(pretrain_gen_path)
-    #     generator.load_state_dict(generator_weights['state_dict'])
+    if pretrain_gen_path is None:
+        print('Pretraining generator with MLE...')
+        pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
+                            name='pretrained_generator')
+    else:
+        print('Load pretrained generator weights')
+        generator_weights = torch.load(pretrain_gen_path)
+        generator.load_state_dict(generator_weights['state_dict'])
 
     if pretrain_disc_path is None:
         print('Pretraining Discriminator....')
