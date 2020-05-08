@@ -221,7 +221,7 @@ class GroundedScanDataset(object):
                    torch.cat(situation_batch, dim=0), situation_representation_batch, torch.cat(target_batch, dim=0),
                    target_lengths, torch.cat(agent_positions_batch, dim=0), torch.cat(target_positions_batch, dim=0))
 
-    def read_dataset(self, max_examples=None, simple_situation_representation=True, load_tensors_from_file=False) -> {}:
+    def read_dataset(self, max_examples=None, simple_situation_representation=True, load_tensors_from_path=None) -> {}:
         """
         Loop over the data examples in GroundedScan and convert them to tensors, also save the lengths
         for input and target sequences that are needed for padding.
@@ -246,9 +246,9 @@ class GroundedScanDataset(object):
                 self.image_dimensions = situation_image.shape[0]
                 self.image_channels = situation_image.shape[-1]
                 # TODO remove
-                if load_tensors_from_file:
+                if load_tensors_from_path:
                     print('Loading tensors from file')
-                    tensors = torch.load('../models/compositional_split_tensors_train.pkl')
+                    tensors = torch.load(os.path.abspath(load_tensors_from_path))
                     # tensors = torch.load('absolutepath/to/compositional_split_tensors_train.pkl')
                     self._input_lengths = tensors['input_lengths']
                     self._target_lengths = tensors['target_lengths']

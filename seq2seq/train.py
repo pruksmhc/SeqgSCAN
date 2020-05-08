@@ -140,6 +140,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           pretrain_disc_path, pretrain_disc_epochs,
           max_training_examples, rollout_trails,
           disc_emb_dim, disc_hid_dim, rollout_update_rate,
+          load_tensors_from_path,
           # SeqGAN params end
           seed=42,
           **kwargs):
@@ -155,7 +156,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                        generate_vocabulary=generate_vocabularies, k=k)
     training_set.read_dataset(max_examples=max_training_examples,
                               simple_situation_representation=simple_situation_representation,
-                              load_tensors_from_file=True) # set this to False if no pickle file available
+                              load_tensors_from_path=load_tensors_from_path) # set this to False if no pickle file available
 
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
