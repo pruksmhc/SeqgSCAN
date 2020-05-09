@@ -248,7 +248,7 @@ class GroundedScanDataset(object):
                 # TODO remove
                 if load_tensors_from_file:
                     print('Loading tensors from file')
-                    tensors = torch.load('../models/compositional_split_tensors_train.pkl')
+                    tensors = torch.load('/beegfs/yp913/GroundedScan/seq2seq/compositional_split_tensors_train.pkl')
                     # tensors = torch.load('absolutepath/to/compositional_split_tensors_train.pkl')
                     self._input_lengths = tensors['input_lengths']
                     self._target_lengths = tensors['target_lengths']
