@@ -86,9 +86,15 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
 
 def pre_train_generator(training_set, training_batch_size, generator, seed, epochs, name):
     random.seed(seed)
-    gen_opt = optim.Adam(generator.parameters())
+    # gen_opt = optim.Adam(generator.parameters(), lr=0.0005, eps=1e-8)
+    gen_opt = optim.Adam(generator.parameters(), lr=0.0005)
+    warmup_steps = epochs // 10
+    # scheduler = torch.optim.lr_scheduler.StepLR(
+    #     gen_opt, gamma=0.1, step_size=1
+    # )
     loss_fn = nn.NLLLoss(reduction='sum')
     for _ in tqdm(range(epochs)):
+        # scheduler.step()
         total_loss = 0
         total_words = 0
         i = 0
@@ -122,7 +128,7 @@ def pre_train_generator(training_set, training_batch_size, generator, seed, epoc
             loss.backward()
             gen_opt.step()
 
-        print('Pretraining Gen Loss = {:.6f}'.format(math.exp(total_loss / total_words)))
+        print('Pretraining Gen Loss = {}'.format(math.exp(total_loss / total_words)))
         torch.save(generator.state_dict(), "{}.ckpt".format(name))
 
 
@@ -135,11 +141,12 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
           lr_decay_steps: int, resume_from_file: str, max_training_iterations: int, output_directory: str,
           print_every: int, evaluate_every: int, conditional_attention: bool, auxiliary_task: bool,
           weight_target_loss: float, attention_type: str, k: int,
+          max_training_examples, max_testing_examples,
           # SeqGAN params begin
           pretrain_gen_path, pretrain_gen_epochs,
           pretrain_disc_path, pretrain_disc_epochs,
-          max_training_examples, rollout_trails,
-          disc_emb_dim, disc_hid_dim, rollout_update_rate,
+          rollout_trails, rollout_update_rate,
+          disc_emb_dim, disc_hid_dim,
           load_tensors_from_path,
           # SeqGAN params end
           seed=42,
@@ -173,7 +180,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     test_set = GroundedScanDataset(data_path, data_directory, split="dev",
                                    input_vocabulary_file=input_vocab_path,
                                    target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    test_set.read_dataset(max_examples=None,
+    test_set.read_dataset(max_examples=max_testing_examples,
                           simple_situation_representation=simple_situation_representation)
 
     # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
@@ -222,7 +229,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     else:
         print('Load pretrained generator weights')
         generator_weights = torch.load(pretrain_gen_path)
-        generator.load_state_dict(generator_weights['state_dict'])
+        generator.load_state_dict(generator_weights)
 
     if pretrain_disc_path is None:
         print('Pretraining Discriminator....')
