@@ -256,12 +256,10 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in \
                 training_set.get_data_iterator(batch_size=training_batch_size):
-
             is_best = False
             generator.train()
-
             # Forward pass.
-            samples = generator.sample(batch_size=training_batch_size,
+            samples = generator.sample(batch_size=len(input_batch),
                                        max_seq_len=max(target_lengths).astype(int),
                                        commands_input=input_batch, commands_lengths=input_lengths,
                                        situations_input=situation_batch,
@@ -295,7 +293,6 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                                             sos_idx=training_set.input_vocabulary.sos_idx)
 
             del samples
-
             # calculate loss on the generated sequence given the rewards
             loss = generator.get_gan_loss(target_scores, target_batch, rewards)
 
@@ -307,9 +304,9 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             scheduler.step(training_iteration)
             optimizer.zero_grad()
             generator.update_state(is_best=is_best)
-
             # Print current metrics.
             if training_iteration % print_every == 0:
+                target_scores = target_scores.view(target_batch.shape[0], target_batch.shape[1], -1)
                 accuracy, exact_match = generator.get_metrics(target_scores, target_batch)
                 learning_rate = scheduler.get_lr()[0]
                 logger.info("Iteration %08d, loss %8.4f, accuracy %5.2f, exact match %5.2f, learning_rate %.5f,"
@@ -342,7 +339,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             rollout.update_params()
 
-            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=10,
+            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=1,
                                 name="training_discriminator")
             training_iteration += 1
             if training_iteration > max_training_iterations:

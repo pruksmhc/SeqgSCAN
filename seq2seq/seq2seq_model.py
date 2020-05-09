@@ -378,7 +378,8 @@ class BahdanauAttentionDecoderRNN(nn.Module):
           attention_weights : attention weights, [batch_size, 1, max_input_length]
         """
         last_hidden, last_cell = last_hidden
-
+        if len(input_tokens.shape) == 0:
+            input_tokens = input_tokens.unsqueeze(0)
         # Embed each input symbol
         embedded_input = self.embedding(input_tokens)  # [batch_size, hidden_size]
         embedded_input = self.dropout(embedded_input)
@@ -410,7 +411,6 @@ class BahdanauAttentionDecoderRNN(nn.Module):
         concat_input = torch.cat([embedded_input,
                                   context_command.transpose(0, 1),
                                   context_situation.transpose(0, 1)], dim=2)  # [1, batch_size hidden_size*3]
-
         last_hidden = (last_hidden, last_cell)
         lstm_output, hidden = self.lstm(concat_input, last_hidden)
         # lstm_output: [1, batch_size, hidden_size]
