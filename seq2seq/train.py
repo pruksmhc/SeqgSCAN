@@ -24,7 +24,6 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
     random.seed(seed)
     loss_fn = nn.BCELoss()
     # PRE-TRAIN DISCRIMINATOR
-    # TODO any specific reason for using AdaGrad?
     dis_opt = optim.Adam(discriminator.parameters())
     for _ in tqdm(range(epochs)):
         total_loss = 0
@@ -61,12 +60,15 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
             else:
                 labels = torch.Tensor(labels)
             out = discriminator.batchClassify(target_batch.long())
+            del target_batch
             loss = loss_fn(out, labels)
             dis_opt.zero_grad()
             loss.backward()
             dis_opt.step()
 
             total_loss += loss.data.item()
+            del loss
+
             total_acc += torch.sum((out > 0.5) == (labels > 0.5)).data.item()
             if i % 500 == 0:  # we print statistics every 500 steps
                 print_loss = float(total_loss) / float(i)  # divide by how many updates there were
@@ -82,6 +84,7 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
             pdb.set_trace()
         print('average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
         torch.save(discriminator.state_dict(), "{}.ckpt".format(name))
+        del total_loss, total_acc
 
 
 def pre_train_generator(training_set, training_batch_size, generator, seed, epochs, name):
@@ -122,12 +125,13 @@ def pre_train_generator(training_set, training_batch_size, generator, seed, epoc
             target = target_batch.contiguous().view(-1)
 
             loss = loss_fn(pred, target)
+            del target, samples
             total_loss += loss.item()
             total_words += pred.size(0) * pred.size(1)
             gen_opt.zero_grad()
             loss.backward()
             gen_opt.step()
-
+            del loss
         print('Pretraining Gen Loss = {}'.format(math.exp(total_loss / total_words)))
         torch.save(generator.state_dict(), "{}.ckpt".format(name))
 
@@ -163,7 +167,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                        generate_vocabulary=generate_vocabularies, k=k)
     training_set.read_dataset(max_examples=max_training_examples,
                               simple_situation_representation=simple_situation_representation,
-                              load_tensors_from_path=load_tensors_from_path) # set this to False if no pickle file available
+                              load_tensors_from_path=load_tensors_from_path)  # set this to False if no pickle file available
 
     logger.info("Done Loading Training set.")
     logger.info("  Loaded {} training examples.".format(training_set.num_examples))
@@ -176,17 +180,18 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         training_set.save_vocabularies(input_vocab_path, target_vocab_path)
         logger.info("Saved vocabularies to {} for input and {} for target.".format(input_vocab_path, target_vocab_path))
 
-    logger.info("Loading Dev. set...")
-    test_set = GroundedScanDataset(data_path, data_directory, split="dev",
-                                   input_vocabulary_file=input_vocab_path,
-                                   target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    test_set.read_dataset(max_examples=max_testing_examples,
-                          simple_situation_representation=simple_situation_representation)
+    # logger.info("Loading Dev. set...")
+    # test_set = GroundedScanDataset(data_path, data_directory, split="dev",
+    #                                input_vocabulary_file=input_vocab_path,
+    #                                target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
+    # test_set.read_dataset(max_examples=max_testing_examples,
+    #                       simple_situation_representation=simple_situation_representation)
+    #
+    # # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
+    # test_set.shuffle_data()
 
-    # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
-    test_set.shuffle_data()
+    # logger.info("Done Loading Dev. set.")
 
-    logger.info("Done Loading Dev. set.")
     generator = Model(input_vocabulary_size=training_set.input_vocabulary_size,
                       target_vocabulary_size=training_set.target_vocabulary_size,
                       num_cnn_channels=training_set.image_channels,
@@ -289,13 +294,17 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                                             sample_lengths=target_lengths,
                                                             sos_idx=training_set.input_vocabulary.sos_idx)
 
+            del samples
+
             # calculate loss on the generated sequence given the rewards
             loss = generator.get_gan_loss(target_scores, target_batch, rewards)
+
+            del rewards
 
             # Backward pass and update model parameters.
             loss.backward()
             optimizer.step()
-            scheduler.step()
+            scheduler.step(training_iteration)
             optimizer.zero_grad()
             generator.update_state(is_best=is_best)
 
@@ -305,6 +314,8 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                 learning_rate = scheduler.get_lr()[0]
                 logger.info("Iteration %08d, loss %8.4f, accuracy %5.2f, exact match %5.2f, learning_rate %.5f,"
                             % (training_iteration, loss, accuracy, exact_match, learning_rate))
+
+            del target_scores, target_batch
 
             # Evaluate on test set.
             if training_iteration % evaluate_every == 0:
@@ -336,4 +347,9 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             training_iteration += 1
             if training_iteration > max_training_iterations:
                 break
+            del loss
+
+        torch.save(generator.state_dict(), os.path.join(output_directory, 'gen_{}_{}.ckpt'.format(training_iteration, seed)))
+        torch.save(discriminator.state_dict(), os.path.join(output_directory, 'dis_{}_{}.ckpt'.format(training_iteration, seed)))
+
     logger.info("Finished training.")
