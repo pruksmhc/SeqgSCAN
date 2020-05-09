@@ -38,22 +38,25 @@ class Rollout(object):
                 samples = self.g_beta.sample(batch_size, seq_len, commands_input, commands_lengths, 
                                              situations_input, target_batch, sos_idx, eos_idx, data)
                 pred = discriminator(samples)
-                # pred = discriminator(samples)
-                # pred = pred.numpy()
+                pred = pred.cpu().detach().numpy()
                 if i == 0:
                     rewards.append(pred)
                 else:
                     rewards[l-1] = rewards[l-1] + pred
-           
+
+                del samples
+
             # for the last token
             pred = discriminator(x)
-            # pred = pred.numpy()
+            pred = pred.cpu().detach().numpy()
             if i == 0:
                 rewards.append(pred)
             else:
                 rewards[seq_len-1] = rewards[seq_len - 1] + pred
-        rewards = torch.stack(rewards).squeeze().t() / (float(num)) # batch_size * seq_len
-        return rewards
+        # rewards = torch.stack(rewards).squeeze().t() / (float(num)) # batch_size * seq_len
+        # rewards = torch.stack(rewards).squeeze().t() / (float(num)) # batch_size * seq_len
+        rewards = np.squeeze(np.transpose(np.array(rewards))) / (1.0 * num)
+        return torch.from_numpy(rewards)
 
     def update_params(self):
         dic = {}
@@ -64,3 +67,5 @@ class Rollout(object):
                 param.data = dic[name]
             else:
                 param.data = self.update_rate * param.data + (1 - self.update_rate) * dic[name]
+        self.g_beta.encoder.lstm.flatten_parameters()
+        self.g_beta.attention_decoder.lstm.flatten_parameters()
