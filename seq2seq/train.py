@@ -336,13 +336,12 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
 
             rollout.update_params()
             torch.save(generator.state_dict(), os.path.join(output_directory, 'gen_{}_{}.ckpt'.format(training_iteration, seed)))
-            train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=1,
-                                name=os.path.join( output_directory, "training_discriminator_2"))
             training_iteration += 1
             if training_iteration > max_training_iterations:
                 break
             del loss
-
+        train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=1,
+                                name=os.path.join( output_directory, "training_discriminator_2"))
         torch.save(generator.state_dict(),
                    '{}/{}'.format(output_directory, 'gen_{}_{}.ckpt'.format(training_iteration, seed)))
         torch.save(discriminator.state_dict(),
