@@ -216,7 +216,9 @@ class GroundedScanDataset(object):
                 derivation_representation_batch.append(example["derivation_representation"])
                 agent_positions_batch.append(example["agent_position"])
                 target_positions_batch.append(example["target_position"])
-
+            # yield (torch.cat(input_batch, dim=0), input_lengths,
+            #        torch.cat(situation_batch, dim=0), torch.cat(target_batch, dim=0), target_lengths)
+            #
             yield (torch.cat(input_batch, dim=0), input_lengths, derivation_representation_batch,
                    torch.cat(situation_batch, dim=0), situation_representation_batch, torch.cat(target_batch, dim=0),
                    target_lengths, torch.cat(agent_positions_batch, dim=0), torch.cat(target_positions_batch, dim=0))

@@ -9,6 +9,7 @@ from seq2seq.gSCAN_dataset import GroundedScanDataset
 from seq2seq.helpers import log_parameters
 from seq2seq.evaluate import evaluate
 from seq2seq.discriminator import Discriminator
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 use_cuda = True if torch.cuda.is_available() else False
@@ -18,6 +19,170 @@ import math
 import pickle
 from tqdm import tqdm
 import random
+import pytorch_lightning as pl
+
+
+class SeqGAN(pl.LightningModule):
+
+    def __init__(self, data_path, hparams, flags):
+        super(SeqGAN, self).__init__()
+        self.hparams = hparams
+        device = torch.device("cuda")
+        # cfg = locals().copy()
+        torch.manual_seed(self.hparams.seed)
+        self.training_set = self.load_training_set(data_path)
+        self.total_vocabulary_size = self.generate_vocab()
+        self.generator = Model(input_vocabulary_size=self.training_set.input_vocabulary_size,
+                               target_vocabulary_size=self.training_set.target_vocabulary_size,
+                               num_cnn_channels=self.training_set.image_channels,
+                               input_padding_idx=self.training_set.input_vocabulary.pad_idx,
+                               target_pad_idx=self.training_set.target_vocabulary.pad_idx,
+                               target_eos_idx=self.training_set.target_vocabulary.eos_idx,
+                               device=device,
+                               **flags)
+        self.discriminator = Discriminator(embedding_dim=self.hparams.disc_emb_dim,
+                                           hidden_dim=self.hparams.disc_hid_dim,
+                                           vocab_size=self.total_vocabulary_size,
+                                           max_seq_len=self.hparams.max_decoding_steps)
+        self.rollout = Rollout(self.generator, self.hparams.rollout_update_rate)
+
+        # if pretrain_gen_path is None:
+        #     print('Pretraining generator with MLE...')
+        #     pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
+        #                         name='pretrained_generator')
+        # else:
+        #     print('Load pretrained generator weights')
+        #     generator_weights = torch.load(pretrain_gen_path)
+        #     generator.load_state_dict(generator_weights)
+        #
+        # if pretrain_disc_path is None:
+        #     print('Pretraining Discriminator....')
+        #     train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
+        #                         name="pretrained_discriminator")
+        # else:
+        #     print('Loading Discriminator....')
+        #     discriminator_weights = torch.load(pretrain_disc_path)
+        #     discriminator.load_state_dict(discriminator_weights)
+
+    def load_training_set(self, data_path):
+        logger.info("Loading Training set...")
+        training_set = GroundedScanDataset(data_path, self.hparams.data_directory, split="train",
+                                           input_vocabulary_file=self.hparams.input_vocab_path,
+                                           target_vocabulary_file=self.hparams.target_vocab_path,
+                                           generate_vocabulary=self.hparams.generate_vocabularies,
+                                           k=self.hparams.k)
+        training_set.read_dataset(max_examples=self.hparams.max_training_examples,
+                                  simple_situation_representation=self.hparams.simple_situation_representation,
+                                  load_tensors_from_path=self.hparams.load_tensors_from_path)
+        logger.info("Done Loading Training set.")
+        return training_set
+
+    def generate_vocab(self):
+        if bool(self.hparams.generate_vocabularies):
+            self.training_set.save_vocabularies(self.hparams.input_vocab_path, self.hparams.target_vocab_path)
+        total_vocab_size = len(set(list(self.training_set.input_vocabulary._word_to_idx.keys()) +
+                                   list(self.training_set.target_vocabulary._word_to_idx.keys())))
+        return total_vocab_size
+
+    def forward(self, input_batch, input_lengths, situation_batch, target_batch, target_lengths):
+        samples = self.generator.sample(batch_size=self.hparams.training_batch_size,
+                                        max_seq_len=max(target_lengths).astype(int),
+                                        commands_input=input_batch, commands_lengths=input_lengths,
+                                        situations_input=situation_batch,
+                                        target_batch=target_batch,
+                                        sos_idx=self.training_set.input_vocabulary.sos_idx,
+                                        eos_idx=self.training_set.input_vocabulary.eos_idx)
+
+        target_scores = self.generator.get_normalized_logits(commands_input=input_batch,
+                                                             commands_lengths=input_lengths,
+                                                             situations_input=situation_batch,
+                                                             samples=samples,
+                                                             sample_lengths=target_lengths,
+                                                             sos_idx=self.training_set.input_vocabulary.sos_idx)
+
+        rewards = self.rollout.get_reward(samples,
+                                          self.hparams.rollout_trails,
+                                          input_batch,
+                                          input_lengths,
+                                          situation_batch,
+                                          target_batch,
+                                          self.training_set.input_vocabulary.sos_idx,
+                                          self.training_set.input_vocabulary.eos_idx,
+                                          self.discriminator)
+        return target_scores, rewards
+
+    def configure_optimizers(self):
+        lr = self.hparams.learning_rate
+        lr_decay = self.hparams.lr_decay
+        lr_decay_steps = self.hparams.lr_decay_steps
+        b1 = self.hparams.adam_beta_1
+        b2 = self.hparams.adam_beta_2
+
+        trainable_parameters = [parameter for parameter in self.generator.parameters() if parameter.requires_grad]
+        opt_g = torch.optim.Adam(trainable_parameters, lr=lr, betas=(b1, b2))
+        trainable_parameters = [parameter for parameter in self.discriminator.parameters() if parameter.requires_grad]
+        opt_d = torch.optim.Adam(trainable_parameters, lr=lr, betas=(b1, b2))
+
+        scheduler_g = LambdaLR(opt_g, lr_lambda=lambda t: lr_decay ** (t / lr_decay_steps))
+        scheduler_d = LambdaLR(opt_g, lr_lambda=lambda t: lr_decay ** (t / lr_decay_steps))
+
+        return [opt_g, opt_d], [scheduler_g, scheduler_d]
+
+    def training_step(self, batch, batch_idx, optimizer_idx):
+        input_batch, input_lengths, _, situation_batch, _, target_batch, target_lengths, agent_positions, target_positions = batch
+        # input_batch, input_lengths, situation_batch, target_batch, target_lengths = batch
+
+        if optimizer_idx == 0:
+            pred, rewards = self(input_batch, input_lengths, situation_batch, target_batch, target_lengths)
+            pred = pred.cuda()
+            rewards = rewards.cuda()
+            g_loss = self.generator.get_gan_loss(pred, target_batch, rewards)
+            del rewards, pred
+            # print("Iteration %08d, loss %8.4f" % (batch_idx, g_loss))
+            self.rollout.update_params()
+            tqdm_dict = {'d_loss': g_loss}
+            output = OrderedDict({
+                'loss': g_loss,
+                'progress_bar': tqdm_dict,
+                'log': tqdm_dict
+            })
+            return output
+
+        if optimizer_idx == 1:
+            neg_samples = self.generator.sample(batch_size=self.hparams.training_batch_size,
+                                                max_seq_len=max(target_lengths).astype(int),
+                                                commands_input=input_batch, commands_lengths=input_lengths,
+                                                situations_input=situation_batch,
+                                                target_batch=target_batch,
+                                                sos_idx=self.training_set.input_vocabulary.sos_idx,
+                                                eos_idx=self.training_set.input_vocabulary.eos_idx)
+            fake = torch.zeros(neg_samples.size(0), 1)
+            fake = fake.type_as(fake)
+            neg_out = self.discriminator.batchClassify(target_batch.long())
+            fake_loss = F.binary_cross_entropy(neg_out, fake)
+
+            valid = torch.ones(target_batch.size(0), 1)
+            valid = valid.type_as(target_batch)
+            pos_out = self.discriminator.batchClassify(target_batch.long())
+            real_loss = F.binary_cross_entropy(pos_out, valid)
+
+            d_loss = (real_loss + fake_loss) / 2
+            tqdm_dict = {'d_loss': d_loss}
+            output = OrderedDict({
+                'loss': d_loss,
+                'progress_bar': tqdm_dict,
+                'log': tqdm_dict
+            })
+            return output
+
+    def train_dataloader(self):
+        return self.training_set.get_data_iterator(batch_size=self.hparams.training_batch_size)
+
+    def on_epoch_end(self):
+        torch.save(self.generator.state_dict(),
+                   os.path.join(self.hparams.output_directory, 'gen_{}.ckpt'.format(self.hparams.seed)))
+        torch.save(self.discriminator.state_dict(),
+                   os.path.join(self.hparams.output_directory, 'dis_{}.ckpt'.format(self.hparams.seed)))
 
 
 def train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs, name):
@@ -43,10 +208,10 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
                                            sos_idx=training_set.input_vocabulary.sos_idx,
                                            eos_idx=training_set.input_vocabulary.eos_idx
                                            )
-            positive_samples = generator.remove_start_of_sequence(positive_samples)
+
             positive_samples = positive_samples.cpu().numpy().tolist()
             neg_samples = neg_samples.cpu().numpy().tolist()
-            labels = [[0.9] * len(positive_samples)] + [[0.1] * len(neg_samples)]
+            labels = [[1] * len(positive_samples)] + [[0] * len(neg_samples)]
             labels = [x for y in labels for x in y]
             target_batch = positive_samples + neg_samples
             num_examples_seen += len(target_batch)
@@ -176,15 +341,15 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         training_set.save_vocabularies(input_vocab_path, target_vocab_path)
         logger.info("Saved vocabularies to {} for input and {} for target.".format(input_vocab_path, target_vocab_path))
 
-    logger.info("Loading Dev. set...")
-    #test_set = GroundedScanDataset(data_path, data_directory, split="dev",
+    # logger.info("Loading Dev. set...")
+    # test_set = GroundedScanDataset(data_path, data_directory, split="dev",
     #                                input_vocabulary_file=input_vocab_path,
     #                                target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    #test_set.read_dataset(max_examples=10,
+    # test_set.read_dataset(max_examples=max_testing_examples,
     #                       simple_situation_representation=simple_situation_representation)
-    
+    #
     # # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
-    #test_set.shuffle_data()
+    # test_set.shuffle_data()
 
     # logger.info("Done Loading Dev. set.")
 
@@ -226,7 +391,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     if pretrain_gen_path is None:
         print('Pretraining generator with MLE...')
         pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
-                            name='pretrained_generator_better')
+                            name='pretrained_generator')
     else:
         print('Load pretrained generator weights')
         generator_weights = torch.load(pretrain_gen_path)
@@ -235,7 +400,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     if pretrain_disc_path is None:
         print('Pretraining Discriminator....')
         train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
-                            name=os.path.join( output_directory, "pretrained_discriminator_better"))
+                            name="pretrained_discriminator")
     else:
         print('Loading Discriminator....')
         discriminator_weights = torch.load(pretrain_disc_path)
@@ -252,10 +417,12 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         for (input_batch, input_lengths, _, situation_batch, _, target_batch,
              target_lengths, agent_positions, target_positions) in \
                 training_set.get_data_iterator(batch_size=training_batch_size):
+
             is_best = False
             generator.train()
+
             # Forward pass.
-            samples = generator.sample(batch_size=len(input_batch),
+            samples = generator.sample(batch_size=training_batch_size,
                                        max_seq_len=max(target_lengths).astype(int),
                                        commands_input=input_batch, commands_lengths=input_lengths,
                                        situations_input=situation_batch,
@@ -289,6 +456,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                                             sos_idx=training_set.input_vocabulary.sos_idx)
 
             del samples
+
             # calculate loss on the generated sequence given the rewards
             loss = generator.get_gan_loss(target_scores, target_batch, rewards)
 
@@ -300,9 +468,9 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             scheduler.step(training_iteration)
             optimizer.zero_grad()
             generator.update_state(is_best=is_best)
+
             # Print current metrics.
             if training_iteration % print_every == 0:
-                target_scores = target_scores.view(target_batch.shape[0], target_batch.shape[1], -1)
                 # accuracy, exact_match = generator.get_metrics(target_scores, target_batch)
                 learning_rate = scheduler.get_lr()[0]
                 logger.info("Iteration %08d, loss %8.4f, learning_rate %.5f,"
@@ -335,9 +503,9 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             #                                       optimizer_state_dict=optimizer.state_dict())
 
             rollout.update_params()
-            torch.save(generator.state_dict(), os.path.join(output_directory, 'gen_{}_{}.ckpt'.format(training_iteration, seed)))
+
             train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=1,
-                                name=os.path.join( output_directory, "training_discriminator_2"))
+                                name="training_discriminator")
             training_iteration += 1
             if training_iteration > max_training_iterations:
                 break
@@ -347,4 +515,5 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                    '{}/{}'.format(output_directory, 'gen_{}_{}.ckpt'.format(training_iteration, seed)))
         torch.save(discriminator.state_dict(),
                    '{}/{}'.format(output_directory, 'dis_{}_{}.ckpt'.format(training_iteration, seed)))
+
     logger.info("Finished training.")
