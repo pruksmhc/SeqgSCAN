@@ -129,7 +129,8 @@ class SeqGAN(pl.LightningModule):
         return [opt_g, opt_d], [scheduler_g, scheduler_d]
 
     def training_step(self, batch, batch_idx, optimizer_idx):
-        input_batch, input_lengths, situation_batch, target_batch, target_lengths = batch
+        input_batch, input_lengths, _, situation_batch, _, target_batch, target_lengths, agent_positions, target_positions = batch
+        # input_batch, input_lengths, situation_batch, target_batch, target_lengths = batch
 
         if optimizer_idx == 0:
             pred, rewards = self(input_batch, input_lengths, situation_batch, target_batch, target_lengths)
