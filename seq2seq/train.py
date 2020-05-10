@@ -43,10 +43,10 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
                                            sos_idx=training_set.input_vocabulary.sos_idx,
                                            eos_idx=training_set.input_vocabulary.eos_idx
                                            )
-
+            positive_samples = generator.remove_start_of_sequence(positive_samples)
             positive_samples = positive_samples.cpu().numpy().tolist()
             neg_samples = neg_samples.cpu().numpy().tolist()
-            labels = [[1] * len(positive_samples)] + [[0] * len(neg_samples)]
+            labels = [[0.9] * len(positive_samples)] + [[0.1] * len(neg_samples)]
             labels = [x for y in labels for x in y]
             target_batch = positive_samples + neg_samples
             num_examples_seen += len(target_batch)
@@ -180,15 +180,15 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         training_set.save_vocabularies(input_vocab_path, target_vocab_path)
         logger.info("Saved vocabularies to {} for input and {} for target.".format(input_vocab_path, target_vocab_path))
 
-    # logger.info("Loading Dev. set...")
-    # test_set = GroundedScanDataset(data_path, data_directory, split="dev",
+    logger.info("Loading Dev. set...")
+    #test_set = GroundedScanDataset(data_path, data_directory, split="dev",
     #                                input_vocabulary_file=input_vocab_path,
     #                                target_vocabulary_file=target_vocab_path, generate_vocabulary=False, k=0)
-    # test_set.read_dataset(max_examples=max_testing_examples,
+    #test_set.read_dataset(max_examples=10,
     #                       simple_situation_representation=simple_situation_representation)
-    #
+    
     # # Shuffle the test set to make sure that if we only evaluate max_testing_examples we get a random part of the set.
-    # test_set.shuffle_data()
+    #test_set.shuffle_data()
 
     # logger.info("Done Loading Dev. set.")
 
@@ -230,7 +230,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     if pretrain_gen_path is None:
         print('Pretraining generator with MLE...')
         pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
-                            name='pretrained_generator')
+                            name='pretrained_generator_better')
     else:
         print('Load pretrained generator weights')
         generator_weights = torch.load(pretrain_gen_path)
@@ -239,7 +239,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
     if pretrain_disc_path is None:
         print('Pretraining Discriminator....')
         train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
-                            name="pretrained_discriminator")
+                            name=os.path.join( output_directory, "pretrained_discriminator_better"))
     else:
         print('Loading Discriminator....')
         discriminator_weights = torch.load(pretrain_disc_path)
@@ -319,12 +319,13 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                 with torch.no_grad():
                     generator.eval()
                     logger.info("Evaluating..")
+                 
                     accuracy, exact_match, target_accuracy = evaluate(
                         test_set.get_data_iterator(batch_size=1), model=generator,
                         max_decoding_steps=max_decoding_steps, pad_idx=test_set.target_vocabulary.pad_idx,
                         sos_idx=test_set.target_vocabulary.sos_idx,
                         eos_idx=test_set.target_vocabulary.eos_idx,
-                        max_examples_to_evaluate=kwargs["max_testing_examples"])
+                        max_examples_to_evaluate=10)
                     logger.info("  Evaluation Accuracy: %5.2f Exact Match: %5.2f "
                                 " Target Accuracy: %5.2f" % (accuracy, exact_match, target_accuracy))
                     if exact_match > best_exact_match:
@@ -338,9 +339,9 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
                                                   optimizer_state_dict=optimizer.state_dict())
 
             rollout.update_params()
-
+            torch.save(generator.state_dict(), os.path.join(output_directory, 'gen_{}_{}.ckpt'.format(training_iteration, seed)))
             train_discriminator(training_set, discriminator, training_batch_size, generator, seed, epochs=1,
-                                name="training_discriminator")
+                                name=os.path.join( output_directory, "training_discriminator_2"))
             training_iteration += 1
             if training_iteration > max_training_iterations:
                 break
