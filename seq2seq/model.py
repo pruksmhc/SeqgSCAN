@@ -174,8 +174,8 @@ class Model(nn.Module):
         one_hot = torch.zeros((N, C))
         if prob.is_cuda:
             one_hot = one_hot.cuda()
-        one_hot.scatter_(1, targets.data.view((-1, 1)), 1)
-        one_hot = one_hot.type(torch.bool)
+        one_hot.scatter_(1, targets.data.reshape((-1, 1)), 1)
+        one_hot = one_hot.type(torch.bool).contiguous()
         one_hot = torch.autograd.Variable(one_hot)
         if prob.is_cuda:
             one_hot = one_hot.cuda()
@@ -360,4 +360,5 @@ class Model(nn.Module):
         target_batch = torch.cat([sos, samples], dim=1)[:, :-1].contiguous()
 
         logits, _ = self.forward(commands_input, commands_lengths, situations_input, target_batch, sample_lengths)
+        # from pdb import set_trace; set_trace()
         return F.softmax(torch.exp(logits), dim=-1).view((-1, logits.shape[-1]))

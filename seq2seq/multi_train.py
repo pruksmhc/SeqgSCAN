@@ -20,7 +20,7 @@ import pickle
 from tqdm import tqdm
 import random
 import pytorch_lightning as pl
-
+from torch.autograd import Variable
 from torch.utils import data
 
 
@@ -101,7 +101,7 @@ class SeqGAN(pl.LightningModule):
         return total_vocab_size
 
     def forward(self, input_batch, input_lengths, situation_batch, target_batch, target_lengths):
-        samples = self.generator.sample(batch_size=self.hparams.training_batch_size,
+        samples = self.generator.sample(batch_size=len(input_batch),
                                         max_seq_len=max(target_lengths).int(),
                                         commands_input=input_batch, commands_lengths=input_lengths,
                                         situations_input=situation_batch,
@@ -146,17 +146,20 @@ class SeqGAN(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
         input_batch, input_lengths, situation_batch, target_batch, target_lengths = batch
+        target_batch = target_batch[:, :max(target_lengths)]
         input_batch = input_batch.cuda()
-        target_batch = input_batch.cuda()
+        target_batch = target_batch.cuda()
         situation_batch = situation_batch.cuda()
 
         if optimizer_idx == 0:
             pred, rewards = self(input_batch, input_lengths, situation_batch, target_batch, target_lengths)
+            rewards = torch.autograd.Variable(torch.Tensor(rewards))
+            rewards = torch.exp(rewards).contiguous().view((-1,))
             pred = pred.cuda()
             rewards = rewards.cuda()
+
             g_loss = self.generator.get_gan_loss(pred, target_batch, rewards)
             del rewards, pred
-            # print("Iteration %08d, loss %8.4f" % (batch_idx, g_loss))
             self.rollout.update_params()
             tqdm_dict = {'d_loss': g_loss}
             output = OrderedDict({
@@ -167,22 +170,24 @@ class SeqGAN(pl.LightningModule):
             return output
 
         if optimizer_idx == 1:
-            neg_samples = self.generator.sample(batch_size=self.hparams.training_batch_size,
+            neg_samples = self.generator.sample(batch_size=len(input_batch),
                                                 max_seq_len=max(target_lengths).int(),
                                                 commands_input=input_batch, commands_lengths=input_lengths,
                                                 situations_input=situation_batch,
                                                 target_batch=target_batch,
                                                 sos_idx=self.training_set.input_vocabulary.sos_idx,
                                                 eos_idx=self.training_set.input_vocabulary.eos_idx)
-            fake = torch.zeros(neg_samples.size(0), 1)
-            fake = fake.type_as(fake)
-            neg_out = self.discriminator.batchClassify(target_batch.long())
-            fake_loss = F.binary_cross_entropy(neg_out, fake)
+            fake = torch.zeros(neg_samples.size(0), dtype=torch.float)
+            fake = fake.type_as(target_batch).float().cuda()
+            neg_out = self.discriminator.batchClassify(neg_samples)
+            neg_out_copy = neg_out.clone().detach()
+            fake_loss = Variable(F.binary_cross_entropy(neg_out_copy.detach(), fake).cuda(), requires_grad=True)
 
-            valid = torch.ones(target_batch.size(0), 1)
-            valid = valid.type_as(target_batch)
-            pos_out = self.discriminator.batchClassify(target_batch.long())
-            real_loss = F.binary_cross_entropy(pos_out, valid)
+            valid = torch.ones(target_batch.size(0), dtype=torch.float)
+            valid = valid.type_as(target_batch).float().cuda()
+            pos_out = self.discriminator.batchClassify(target_batch)
+            pos_out_copy = pos_out.clone().detach()
+            real_loss = Variable(F.binary_cross_entropy(pos_out_copy, valid).cuda(), requires_grad=True)
 
             d_loss = (real_loss + fake_loss) / 2
             tqdm_dict = {'d_loss': d_loss}

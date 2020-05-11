@@ -254,6 +254,7 @@ class GroundedScanDataset(object):
             target_batch.append(padded_target)
             situation_batch.append(example["situation_tensor"])
 
+        from pdb import set_trace; set_trace()
         torch.save(torch.cat(input_batch, dim=0), 'inputs.pkl')
         torch.save(input_lengths, 'input_lengths.pkl')
         torch.save(torch.cat(situation_batch, dim=0), 'situations.pkl')

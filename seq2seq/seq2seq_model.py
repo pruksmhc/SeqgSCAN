@@ -409,7 +409,7 @@ class BahdanauAttentionDecoderRNN(nn.Module):
         # Concatenate the context vector and RNN hidden state, and map to an output
         attention_weights_commands = attention_weights_commands.squeeze(1)  # [batch_size, max_input_length]
         attention_weights_situations = attention_weights_situations.squeeze(1)  # [batch_size, im_dim * im_dim]
-        # print(embedded_input.shape, context_command.transpose(0,1).shape)
+        # print(embedded_input.shape, context_command.transpose(0, 1).shape, context_situation.transpose(0, 1).shape)
         concat_input = torch.cat([embedded_input,
                                   context_command.transpose(0, 1),
                                   context_situation.transpose(0, 1)], dim=2)  # [1, batch_size hidden_size*3]

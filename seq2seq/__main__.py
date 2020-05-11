@@ -172,7 +172,7 @@ def main(flags):
                           target_pad_idx=test_set.target_vocabulary.pad_idx,
                           target_eos_idx=test_set.target_vocabulary.eos_idx,
                           **flags)
-            model = model.cuda() if use_cuda else model
+            model = model.cuda() if use_cuda else modeltorch.cat(target_batch, dim=0)
 
             # Load model and vocabularies if resuming.
             assert os.path.isfile(flags["resume_from_file"]), "No checkpoint found at {}".format(
