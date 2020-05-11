@@ -32,7 +32,7 @@ class ConvolutionalNet(nn.Module):
         #     conv_3 = self.conv_3.cuda()
         # else:
         #     conv_3 = self.conv_3
-        conved_3 = conv_3(input_images)
+        conved_3 = self.conv_3(input_images)
         images_features = torch.cat([conved_1, conved_2, conved_3], dim=1)
         _, num_channels, _, image_dimension = images_features.size()
         images_features = images_features.transpose(1, 3)
