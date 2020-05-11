@@ -39,10 +39,10 @@ class EncoderRNN(nn.Module):
         self.embedding_dim = embedding_dim
         self.dropout_probability = dropout_probability
         self.bidirectional = bidirectional
-        self.embedding = nn.Embedding(input_size, embedding_dim, padding_idx=padding_idx).cuda()
+        self.embedding = nn.Embedding(input_size, embedding_dim, padding_idx=padding_idx)
         self.dropout = nn.Dropout(dropout_probability)
         self.lstm = nn.LSTM(input_size=rnn_input_size, hidden_size=hidden_size, num_layers=num_layers,
-                            dropout=dropout_probability, bidirectional=bidirectional).cuda()
+                            dropout=dropout_probability, bidirectional=bidirectional)
 
     def forward(self, input_batch: torch.LongTensor, input_lengths: List[int]) -> Tuple[torch.Tensor, dict]:
         """

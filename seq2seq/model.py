@@ -50,7 +50,7 @@ class Model(nn.Module):
         self.situation_encoder = ConvolutionalNet(num_channels=cnn_input_channels,
                                                   cnn_kernel_size=cnn_kernel_size,
                                                   num_conv_channels=cnn_hidden_num_channels,
-                                                  dropout_probability=cnn_dropout_p)
+                                                  dropout_probability=cnn_dropout_p).to(device=device)
         # Attention over the output features of the ConvolutionalNet.
         # Input: [bsz, 1, decoder_hidden_size], [bsz, image_width * image_width, cnn_hidden_num_channels * 3]
         # Output: [bsz, 1, decoder_hidden_size], [bsz, 1, image_width * image_width]
@@ -68,7 +68,7 @@ class Model(nn.Module):
                                   rnn_input_size=embedding_dimension,
                                   hidden_size=encoder_hidden_size, num_layers=num_encoder_layers,
                                   dropout_probability=encoder_dropout_p, bidirectional=encoder_bidirectional,
-                                  padding_idx=input_padding_idx)
+                                  padding_idx=input_padding_idx).to(device=device)
         # Used to project the final encoder state to the decoder hidden state such that it can be initialized with it.
         self.enc_hidden_to_dec_hidden = nn.Linear(encoder_hidden_size, decoder_hidden_size).to(device=device)
         self.textual_attention = Attention(key_size=encoder_hidden_size, query_size=decoder_hidden_size,
@@ -87,14 +87,14 @@ class Model(nn.Module):
                                                                  padding_idx=target_pad_idx,
                                                                  textual_attention=self.textual_attention,
                                                                  visual_attention=self.visual_attention,
-                                                                 conditional_attention=conditional_attention)
+                                                                 conditional_attention=conditional_attention).to(device=device)
         elif attention_type == "luong":
             logger.warning("Luong attention not correctly implemented.")
             self.attention_decoder = LuongAttentionDecoderRNN(hidden_size=decoder_hidden_size,
                                                               output_size=target_vocabulary_size,
                                                               num_layers=num_decoder_layers,
                                                               dropout_probability=decoder_dropout_p,
-                                                              conditional_attention=conditional_attention)
+                                                              conditional_attention=conditional_attention).to(device=device)
         else:
             raise ValueError("Unknown attention type {} specified.".format(attention_type))
 
