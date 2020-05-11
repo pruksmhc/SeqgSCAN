@@ -10,7 +10,7 @@ from seq2seq.helpers import log_parameters
 from seq2seq.evaluate import evaluate
 from seq2seq.discriminator import Discriminator
 from collections import OrderedDict
-
+import numpy as np
 logger = logging.getLogger(__name__)
 use_cuda = True if torch.cuda.is_available() else False
 import torch.nn as nn
@@ -21,6 +21,35 @@ from tqdm import tqdm
 import random
 import pytorch_lightning as pl
 
+from torch.utils import data
+
+
+class Dataset(data.Dataset):
+    def __init__(self, input_path):
+        # inputs, input_lengths, situations, targets, target_lengths = torch.load(input_path)
+        self.inputs = torch.load(os.path.join(input_path, 'inputs.pkl')).cpu()
+        self.input_lengths = get_lengths(self.inputs.numpy())
+        # self.input_lengths = torch.load(os.path.join(input_path, 'input_lengths.pkl'))
+        self.situations = torch.load(os.path.join(input_path, 'situations.pkl')).cpu()
+        self.targets = torch.load(os.path.join(input_path, 'targets.pkl')).cpu()
+        self.target_lengths = get_lengths(self.inputs.numpy())
+        # self.target_lengths = torch.load(os.path.join(input_path, 'target_lengths.pkl'))
+
+    def __len__(self):
+        return len(self.inputs)
+
+    def __getitem__(self, i):
+        # return self.inputs[i], self.situations[i], self.targets[i]
+        return self.inputs[i], self.input_lengths[i], self.situations[i], self.targets[i], self.target_lengths[i]
+        # return X
+
+
+def get_lengths(inputs):
+    lengths = []
+    for i in inputs:
+        lengths.append(sum(np.where(i != 0, 1, 0)))
+    return torch.tensor(np.array(lengths))
+
 
 class SeqGAN(pl.LightningModule):
 
@@ -30,8 +59,10 @@ class SeqGAN(pl.LightningModule):
         device = torch.device("cuda")
         # cfg = locals().copy()
         torch.manual_seed(self.hparams.seed)
-        self.training_set = self.load_training_set(data_path)
-        self.total_vocabulary_size = self.generate_vocab()
+        self.training_set, self.my_dataset = self.load_training_set(data_path)
+        self.total_vocabulary_size = 23 #self.generate_vocab()
+        self.training_set.image_dimensions = 6
+        self.training_set.image_channels = 16
         self.generator = Model(input_vocabulary_size=self.training_set.input_vocabulary_size,
                                target_vocabulary_size=self.training_set.target_vocabulary_size,
                                num_cnn_channels=self.training_set.image_channels,
@@ -39,43 +70,28 @@ class SeqGAN(pl.LightningModule):
                                target_pad_idx=self.training_set.target_vocabulary.pad_idx,
                                target_eos_idx=self.training_set.target_vocabulary.eos_idx,
                                device=device,
-                               **flags)
+                               **flags).to(device=device)
         self.discriminator = Discriminator(embedding_dim=self.hparams.disc_emb_dim,
                                            hidden_dim=self.hparams.disc_hid_dim,
                                            vocab_size=self.total_vocabulary_size,
                                            max_seq_len=self.hparams.max_decoding_steps)
         self.rollout = Rollout(self.generator, self.hparams.rollout_update_rate)
 
-        # if pretrain_gen_path is None:
-        #     print('Pretraining generator with MLE...')
-        #     pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
-        #                         name='pretrained_generator')
-        # else:
-        #     print('Load pretrained generator weights')
-        #     generator_weights = torch.load(pretrain_gen_path)
-        #     generator.load_state_dict(generator_weights)
-        #
-        # if pretrain_disc_path is None:
-        #     print('Pretraining Discriminator....')
-        #     train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
-        #                         name="pretrained_discriminator")
-        # else:
-        #     print('Loading Discriminator....')
-        #     discriminator_weights = torch.load(pretrain_disc_path)
-        #     discriminator.load_state_dict(discriminator_weights)
-
     def load_training_set(self, data_path):
         logger.info("Loading Training set...")
+        # training_set=None
         training_set = GroundedScanDataset(data_path, self.hparams.data_directory, split="train",
                                            input_vocabulary_file=self.hparams.input_vocab_path,
                                            target_vocabulary_file=self.hparams.target_vocab_path,
                                            generate_vocabulary=self.hparams.generate_vocabularies,
                                            k=self.hparams.k)
-        training_set.read_dataset(max_examples=self.hparams.max_training_examples,
-                                  simple_situation_representation=self.hparams.simple_situation_representation,
-                                  load_tensors_from_path=self.hparams.load_tensors_from_path)
+        my_dataset = Dataset(self.hparams.load_tensors_from_path)
+        # training_set.read_dataset(max_examples=self.hparams.max_training_examples,
+        #                           simple_situation_representation=self.hparams.simple_situation_representation,
+        #                           load_tensors_from_path=self.hparams.load_tensors_from_path)
+        # training_set.save_data()
         logger.info("Done Loading Training set.")
-        return training_set
+        return training_set, my_dataset
 
     def generate_vocab(self):
         if bool(self.hparams.generate_vocabularies):
@@ -86,7 +102,7 @@ class SeqGAN(pl.LightningModule):
 
     def forward(self, input_batch, input_lengths, situation_batch, target_batch, target_lengths):
         samples = self.generator.sample(batch_size=self.hparams.training_batch_size,
-                                        max_seq_len=max(target_lengths).astype(int),
+                                        max_seq_len=max(target_lengths).int(),
                                         commands_input=input_batch, commands_lengths=input_lengths,
                                         situations_input=situation_batch,
                                         target_batch=target_batch,
@@ -129,8 +145,10 @@ class SeqGAN(pl.LightningModule):
         return [opt_g, opt_d], [scheduler_g, scheduler_d]
 
     def training_step(self, batch, batch_idx, optimizer_idx):
-        input_batch, input_lengths, _, situation_batch, _, target_batch, target_lengths, agent_positions, target_positions = batch
-        # input_batch, input_lengths, situation_batch, target_batch, target_lengths = batch
+        input_batch, input_lengths, situation_batch, target_batch, target_lengths = batch
+        input_batch = input_batch.cuda()
+        target_batch = input_batch.cuda()
+        situation_batch = situation_batch.cuda()
 
         if optimizer_idx == 0:
             pred, rewards = self(input_batch, input_lengths, situation_batch, target_batch, target_lengths)
@@ -150,7 +168,7 @@ class SeqGAN(pl.LightningModule):
 
         if optimizer_idx == 1:
             neg_samples = self.generator.sample(batch_size=self.hparams.training_batch_size,
-                                                max_seq_len=max(target_lengths).astype(int),
+                                                max_seq_len=max(target_lengths).int(),
                                                 commands_input=input_batch, commands_lengths=input_lengths,
                                                 situations_input=situation_batch,
                                                 target_batch=target_batch,
@@ -176,7 +194,11 @@ class SeqGAN(pl.LightningModule):
             return output
 
     def train_dataloader(self):
-        return self.training_set.get_data_iterator(batch_size=self.hparams.training_batch_size)
+        return data.DataLoader(dataset=self.my_dataset, batch_size=self.hparams.training_batch_size,
+                               num_workers=self.hparams.num_workers, shuffle=True)
+
+    # def train_dataloader(self):
+    #     return self.training_set.get_data_iterator(batch_size=self.hparams.training_batch_size)
 
     def on_epoch_end(self):
         torch.save(self.generator.state_dict(),
@@ -205,10 +227,8 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
                                            commands_input=input_batch, commands_lengths=input_lengths,
                                            target_batch=positive_samples,
                                            situations_input=situation_batch,
-                                           sos_idx=training_set.input_vocabulary.sos_idx,
-                                           eos_idx=training_set.input_vocabulary.eos_idx
-                                           )
-
+                                           sos_idx=1,  # self.training_set.input_vocabulary.sos_idx,
+                                           eos_idx=2)  # self.training_set.input_vocabulary.eos_idx)
             positive_samples = positive_samples.cpu().numpy().tolist()
             neg_samples = neg_samples.cpu().numpy().tolist()
             labels = [[1] * len(positive_samples)] + [[0] * len(neg_samples)]

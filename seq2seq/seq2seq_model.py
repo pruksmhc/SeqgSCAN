@@ -39,10 +39,10 @@ class EncoderRNN(nn.Module):
         self.embedding_dim = embedding_dim
         self.dropout_probability = dropout_probability
         self.bidirectional = bidirectional
-        self.embedding = nn.Embedding(input_size, embedding_dim, padding_idx=padding_idx)
+        self.embedding = nn.Embedding(input_size, embedding_dim, padding_idx=padding_idx).cuda()
         self.dropout = nn.Dropout(dropout_probability)
         self.lstm = nn.LSTM(input_size=rnn_input_size, hidden_size=hidden_size, num_layers=num_layers,
-                            dropout=dropout_probability, bidirectional=bidirectional)
+                            dropout=dropout_probability, bidirectional=bidirectional).cuda()
 
     def forward(self, input_batch: torch.LongTensor, input_lengths: List[int]) -> Tuple[torch.Tensor, dict]:
         """
@@ -55,13 +55,14 @@ class EncoderRNN(nn.Module):
         the sequences (0:t for the forward LSTM, t:T for the backward LSTM).
         """
         assert input_batch.size(0) == len(input_lengths), "Wrong amount of lengths passed to .forward()"
+        input_batch = input_batch.to(device=device)
         input_embeddings = self.embedding(input_batch)  # [batch_size, max_length, embedding_dim]
         input_embeddings = self.dropout(input_embeddings)  # [batch_size, max_length, embedding_dim]
 
         # Sort the sequences by length in descending order.
         batch_size = len(input_lengths)
         max_length = max(input_lengths)
-        input_lengths = torch.tensor(input_lengths, device=device, dtype=torch.long)
+        input_lengths = torch.tensor(input_lengths).to(dtype=torch.long, device=device)
         input_lengths, perm_idx = torch.sort(input_lengths, descending=True)
         input_embeddings = input_embeddings.index_select(dim=0, index=perm_idx)
 
@@ -118,7 +119,7 @@ class Attention(nn.Module):
         """
         batch_size = projected_keys.size(0)
         assert len(memory_lengths) == batch_size
-        memory_lengths = torch.tensor(memory_lengths, dtype=torch.long, device=device)
+        memory_lengths = torch.tensor(memory_lengths).to(dtype=torch.long, device=device)
 
         # Project queries down to the correct dimension.
         # [bsz, 1, query_dimension] X [bsz, query_dimension, hidden_dim] = [bsz, 1, hidden_dim]
@@ -381,6 +382,7 @@ class BahdanauAttentionDecoderRNN(nn.Module):
         if len(input_tokens.shape) == 0:
             input_tokens = input_tokens.unsqueeze(0)
         # Embed each input symbol
+        input_tokens = input_tokens.to(device=device)
         embedded_input = self.embedding(input_tokens)  # [batch_size, hidden_size]
         embedded_input = self.dropout(embedded_input)
         embedded_input = embedded_input.unsqueeze(0)  # [1, batch_size, hidden_size]
@@ -455,14 +457,14 @@ class BahdanauAttentionDecoderRNN(nn.Module):
         batch_size, max_time = input_tokens.size()
 
         # Sort the sequences by length in descending order
-        input_lengths = torch.tensor(input_lengths, dtype=torch.long, device=device)
+        input_lengths = torch.tensor(input_lengths).to(dtype=torch.long, device=device)
         input_lengths, perm_idx = torch.sort(input_lengths, descending=True)
         input_tokens_sorted = input_tokens.index_select(dim=0, index=perm_idx)
         initial_h, initial_c = init_hidden
         hidden = (initial_h.index_select(dim=1, index=perm_idx),
                   initial_c.index_select(dim=1, index=perm_idx))
         encoded_commands = encoded_commands.index_select(dim=1, index=perm_idx)
-        commands_lengths = torch.tensor(commands_lengths, device=device)
+        commands_lengths = torch.tensor(commands_lengths).to(device=device)
         commands_lengths = commands_lengths.index_select(dim=0, index=perm_idx)
         encoded_situations = encoded_situations.index_select(dim=0, index=perm_idx)
 

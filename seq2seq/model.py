@@ -55,7 +55,7 @@ class Model(nn.Module):
         # Input: [bsz, 1, decoder_hidden_size], [bsz, image_width * image_width, cnn_hidden_num_channels * 3]
         # Output: [bsz, 1, decoder_hidden_size], [bsz, 1, image_width * image_width]
         self.visual_attention = Attention(key_size=cnn_hidden_num_channels * 3, query_size=decoder_hidden_size,
-                                          hidden_size=decoder_hidden_size)
+                                          hidden_size=decoder_hidden_size).to(device=device)
 
         self.auxiliary_task = auxiliary_task
         if auxiliary_task:
@@ -70,9 +70,9 @@ class Model(nn.Module):
                                   dropout_probability=encoder_dropout_p, bidirectional=encoder_bidirectional,
                                   padding_idx=input_padding_idx)
         # Used to project the final encoder state to the decoder hidden state such that it can be initialized with it.
-        self.enc_hidden_to_dec_hidden = nn.Linear(encoder_hidden_size, decoder_hidden_size)
+        self.enc_hidden_to_dec_hidden = nn.Linear(encoder_hidden_size, decoder_hidden_size).to(device=device)
         self.textual_attention = Attention(key_size=encoder_hidden_size, query_size=decoder_hidden_size,
-                                           hidden_size=decoder_hidden_size)
+                                           hidden_size=decoder_hidden_size).to(device=device)
 
         # Input: [batch_size, max_target_length], initial hidden: ([batch_size, hidden_size], [batch_size, hidden_size])
         # Input for attention: [batch_size, max_input_length, hidden_size],

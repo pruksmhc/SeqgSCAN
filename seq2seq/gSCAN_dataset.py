@@ -223,6 +223,43 @@ class GroundedScanDataset(object):
                    torch.cat(situation_batch, dim=0), situation_representation_batch, torch.cat(target_batch, dim=0),
                    target_lengths, torch.cat(agent_positions_batch, dim=0), torch.cat(target_positions_batch, dim=0))
 
+    def save_data(self, batch_size=10):
+        """
+        Iterate over batches of example tensors, pad them to the max length in the batch and yield.
+        :param batch_size: how many examples to put in each batch.
+        :param auxiliary_task: if true, also batches agent and target positions (flattened, so
+        agent row * agent columns = agent_position)
+        :return: tuple of input commands batch, corresponding input lengths, situation image batch,
+        list of corresponding situation representations, target commands batch and corresponding target lengths.
+        """
+
+        examples = self._examples
+        input_lengths = self._input_lengths
+        target_lengths = self._target_lengths
+        max_input_length = np.max(input_lengths)
+        max_target_length = np.max(target_lengths)
+        input_batch = []
+        target_batch = []
+        situation_batch = []
+        for example in examples:
+            to_pad_input = max_input_length - example["input_tensor"].size(1)
+            to_pad_target = max_target_length - example["target_tensor"].size(1)
+            padded_input = torch.cat([
+                example["input_tensor"],
+                torch.zeros(int(to_pad_input), dtype=torch.long, device=device).unsqueeze(0)], dim=1)
+            padded_target = torch.cat([
+                example["target_tensor"],
+                torch.zeros(int(to_pad_target), dtype=torch.long, device=device).unsqueeze(0)], dim=1)
+            input_batch.append(padded_input)
+            target_batch.append(padded_target)
+            situation_batch.append(example["situation_tensor"])
+
+        torch.save(torch.cat(input_batch, dim=0), 'inputs.pkl')
+        torch.save(input_lengths, 'input_lengths.pkl')
+        torch.save(torch.cat(situation_batch, dim=0), 'situations.pkl')
+        torch.save(torch.cat(target_batch, dim=0), 'targets.pkl')
+        torch.save(target_lengths, 'target_lengths.pkl')
+
     def read_dataset(self, max_examples=None, simple_situation_representation=True, load_tensors_from_path=None) -> {}:
         """
         Loop over the data examples in GroundedScan and convert them to tensors, also save the lengths
@@ -242,9 +279,10 @@ class GroundedScanDataset(object):
             empty_example = {}
             input_commands = example["input_command"]
             target_commands = example["target_command"]
-            #equivalent_target_commands = example["equivalent_target_command"]
+            # equivalent_target_commands = example["equivalent_target_command"]
             situation_image = example["situation_image"]
             if i == 0:
+
                 self.image_dimensions = situation_image.shape[0]
                 self.image_channels = situation_image.shape[-1]
                 # TODO remove
@@ -271,12 +309,12 @@ class GroundedScanDataset(object):
             situation_repr = example["situation_representation"]
             input_array = self.sentence_to_array(input_commands, vocabulary="input")
             target_array = self.sentence_to_array(target_commands, vocabulary="target")
-            #equivalent_target_array = self.sentence_to_array(equivalent_target_commands, vocabulary="target")
+            # equivalent_target_array = self.sentence_to_array(equivalent_target_commands, vocabulary="target")
             empty_example["input_tensor"] = torch.tensor(input_array, dtype=torch.long, device=device).unsqueeze(
                 dim=0)
             empty_example["target_tensor"] = torch.tensor(target_array, dtype=torch.long, device=device).unsqueeze(
                 dim=0)
-            #empty_example["equivalent_target_tensor"] = torch.tensor(equivalent_target_array, dtype=torch.long,
+            # empty_example["equivalent_target_tensor"] = torch.tensor(equivalent_target_array, dtype=torch.long,
             #                                                         device=device).unsqueeze(dim=0)
             empty_example["situation_tensor"] = torch.tensor(situation_image, dtype=torch.float, device=device
                                                              ).unsqueeze(dim=0)

@@ -116,6 +116,7 @@ parser.add_argument("--load_tensors_from_path", type=str, default=None, help='Pa
 # Other arguments
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--gpus", type=int, default=1, help="Number of gpus to use")
+parser.add_argument("--num_workers", type=int, default=4, help="Number of workers")
 
 
 def main(flags):
