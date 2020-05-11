@@ -62,7 +62,7 @@ class EncoderRNN(nn.Module):
         # Sort the sequences by length in descending order.
         batch_size = len(input_lengths)
         max_length = max(input_lengths)
-        input_lengths = torch.tensor(input_lengths).to(dtype=torch.long, device=device)
+        input_lengths = torch.tensor(input_lengths).contiguous().to(dtype=torch.long, device=device)
         input_lengths, perm_idx = torch.sort(input_lengths, descending=True)
         input_embeddings = input_embeddings.index_select(dim=0, index=perm_idx)
 
@@ -457,14 +457,14 @@ class BahdanauAttentionDecoderRNN(nn.Module):
         batch_size, max_time = input_tokens.size()
 
         # Sort the sequences by length in descending order
-        input_lengths = torch.tensor(input_lengths).to(dtype=torch.long, device=device)
+        input_lengths = torch.tensor(input_lengths).contiguous().to(dtype=torch.long, device=device)
         input_lengths, perm_idx = torch.sort(input_lengths, descending=True)
         input_tokens_sorted = input_tokens.index_select(dim=0, index=perm_idx)
         initial_h, initial_c = init_hidden
         hidden = (initial_h.index_select(dim=1, index=perm_idx),
                   initial_c.index_select(dim=1, index=perm_idx))
         encoded_commands = encoded_commands.index_select(dim=1, index=perm_idx)
-        commands_lengths = torch.tensor(commands_lengths).to(device=device)
+        commands_lengths = torch.tensor(commands_lengths).contiguous().to(device=device)
         commands_lengths = commands_lengths.index_select(dim=0, index=perm_idx)
         encoded_situations = encoded_situations.index_select(dim=0, index=perm_idx)
 

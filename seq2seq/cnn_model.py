@@ -28,10 +28,10 @@ class ConvolutionalNet(nn.Module):
         input_images = input_images.transpose(1, 3)
         conved_1 = self.conv_1(input_images)
         conved_2 = self.conv_2(input_images)
-        # if input_images.device.type == "cuda":
-        #     conv_3 = self.conv_3.cuda()
-        # else:
-        #     conv_3 = self.conv_3
+        if input_images.device.type == "cuda":
+            conv_3 = self.conv_3.cuda()
+        else:
+            conv_3 = self.conv_3
         conved_3 = self.conv_3(input_images)
         images_features = torch.cat([conved_1, conved_2, conved_3], dim=1)
         _, num_channels, _, image_dimension = images_features.size()
