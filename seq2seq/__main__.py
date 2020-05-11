@@ -5,8 +5,9 @@ import torch
 
 from seq2seq.gSCAN_dataset import GroundedScanDataset
 from seq2seq.model import Model
-from seq2seq.train import train
+from seq2seq.multi_train import train, SeqGAN
 from seq2seq.predict import predict_and_save
+from pytorch_lightning import Trainer
 
 FORMAT = "%(asctime)-15s %(message)s"
 logging.basicConfig(format=FORMAT, level=logging.DEBUG,
@@ -114,6 +115,8 @@ parser.add_argument("--load_tensors_from_path", type=str, default=None, help='Pa
 
 # Other arguments
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--gpus", type=int, default=1, help="Number of gpus to use")
+parser.add_argument("--num_workers", type=int, default=4, help="Number of workers")
 
 
 def main(flags):
@@ -135,7 +138,13 @@ def main(flags):
 
     data_path = os.path.join(flags["data_directory"], "dataset.txt")
     if flags["mode"] == "train":
-        train(data_path=data_path, **flags)
+        hparams = parser.parse_args()
+        model = SeqGAN(data_path=data_path, hparams=hparams, flags=flags)
+        trainer = Trainer(default_save_path=hparams.output_directory,
+                          gpus=hparams.gpus,
+                          max_epochs=hparams.max_training_iterations)
+        trainer.fit(model)
+        # train(data_path=data_path, **flags)
     elif flags["mode"] == "test":
         assert os.path.exists(os.path.join(flags["data_directory"], flags["input_vocab_path"])) and os.path.exists(
             os.path.join(flags["data_directory"], flags["target_vocab_path"])), \
