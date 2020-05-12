@@ -168,8 +168,13 @@ def main(flags):
             # Load model and vocabularies if resuming.
             assert os.path.isfile(flags["resume_from_file"]), "No checkpoint found at {}".format(
                 flags["resume_from_file"])
+
             logger.info("Loading checkpoint from file at '{}'".format(flags["resume_from_file"]))
-            model.load_model(flags["resume_from_file"])
+
+            # model.load_model(flags["resume_from_file"])
+            ## 0.05genepoch2 test
+            model.load_state_dict(torch.load('models/0.05genepoch2'))
+
             start_iteration = model.trained_iterations
             logger.info("Loaded checkpoint '{}' (iter {})".format(flags["resume_from_file"], start_iteration))
             output_file_name = "_".join([split, flags["output_file_name"]])
