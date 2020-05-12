@@ -60,7 +60,7 @@ class SeqGAN(pl.LightningModule):
         # cfg = locals().copy()
         torch.manual_seed(self.hparams.seed)
         self.training_set, self.my_dataset = self.load_training_set(data_path)
-        self.total_vocabulary_size = 23 #self.generate_vocab()
+        self.total_vocabulary_size = 24 #self.generate_vocab()
         self.training_set.image_dimensions = 6
         self.training_set.image_channels = 16
         self.generator = Model(input_vocabulary_size=self.training_set.input_vocabulary_size,
@@ -77,6 +77,25 @@ class SeqGAN(pl.LightningModule):
                                            max_seq_len=self.hparams.max_decoding_steps)
         self.rollout = Rollout(self.generator, self.hparams.rollout_update_rate)
 
+        # if pretrain_gen_path is None:
+        #     print('Pretraining generator with MLE...')
+        #     pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
+        #                         name='pretrained_generator_better')
+        # else:
+        #     print('Load pretrained generator weights')
+        #     generator_weights = torch.load(pretrain_gen_path)
+        #     generator.load_state_dict(generator_weights)
+
+        if self.hparams.pretrain_disc_path is None:
+            print('Please pass a pretrained discriminator checkpoint')
+            # print('Pretraining Discriminator....')
+            # train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
+            #                     name=os.path.join( output_directory, "pretrained_discriminator_better"))
+        else:
+            print('Loading Discriminator....')
+            discriminator_weights = torch.load(self.hparams.pretrain_disc_path)
+            self.discriminator.load_state_dict(discriminator_weights)
+
     def load_training_set(self, data_path):
         logger.info("Loading Training set...")
         # training_set=None
@@ -92,6 +111,12 @@ class SeqGAN(pl.LightningModule):
         # training_set.save_data()
         logger.info("Done Loading Training set.")
         return training_set, my_dataset
+
+    def save_model(self, epoch):
+        torch.save(self.generator.state_dict(),
+                   '{}/{}'.format(self.hparams.output_directory, 'gen_{}_{}.ckpt'.format(epoch, self.hparams.seed)))
+        torch.save(self.discriminator.state_dict(),
+                   '{}/{}'.format(self.hparams.output_directory, 'dis_{}_{}.ckpt'.format(epoch, self.hparams.seed)))
 
     def generate_vocab(self):
         if bool(self.hparams.generate_vocabularies):
@@ -196,6 +221,7 @@ class SeqGAN(pl.LightningModule):
                 'progress_bar': tqdm_dict,
                 'log': tqdm_dict
             })
+            self.save_model(batch_idx)
             return output
 
     def train_dataloader(self):
