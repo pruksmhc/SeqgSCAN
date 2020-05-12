@@ -46,7 +46,7 @@ parser.add_argument("--test_batch_size", type=int, default=1, help="Currently on
 parser.add_argument("--max_training_examples", type=int, default=None, help="If None all are used.")
 parser.add_argument("--learning_rate", type=float, default=0.001)
 parser.add_argument('--lr_decay', type=float, default=0.9)
-parser.add_argument('--lr_decay_steps', type=float, default=20000)
+parser.add_argument('--lr_decay_steps', type=float, default=200)
 parser.add_argument("--adam_beta_1", type=float, default=0.9)
 parser.add_argument("--adam_beta_2", type=float, default=0.999)
 parser.add_argument("--print_every", type=int, default=100)

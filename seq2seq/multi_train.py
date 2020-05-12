@@ -78,7 +78,7 @@ class SeqGAN(pl.LightningModule):
         self.rollout = Rollout(self.generator, self.hparams.rollout_update_rate)
 
         if self.hparams.pretrain_gen_path is None:
-            pprint('Please pass a pretrained generator checkpoint  or it would not do pretraining')
+            print('Please pass a pretrained generator checkpoint  or it would not do pretraining')
             # print('Pretraining generator with MLE...')
             # pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
             #                     name='pretrained_generator_better')
@@ -113,11 +113,11 @@ class SeqGAN(pl.LightningModule):
         logger.info("Done Loading Training set.")
         return training_set, my_dataset
 
-    def save_model(self, epoch):
+    def save_model(self):
         torch.save(self.generator.state_dict(),
-                   '{}/{}'.format(self.hparams.output_directory, 'gen_{}.ckpt'.format(epoch, self.hparams.seed)))
+                   '{}/{}'.format(self.hparams.output_directory, 'gen_{}.ckpt'.format(self.hparams.seed)))
         torch.save(self.discriminator.state_dict(),
-                   '{}/{}'.format(self.hparams.output_directory, 'dis_{}.ckpt'.format(epoch, self.hparams.seed)))
+                   '{}/{}'.format(self.hparams.output_directory, 'dis_{}.ckpt'.format(self.hparams.seed)))
 
     def generate_vocab(self):
         if bool(self.hparams.generate_vocabularies):
