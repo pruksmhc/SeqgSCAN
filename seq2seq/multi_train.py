@@ -161,7 +161,7 @@ class SeqGAN(pl.LightningModule):
             g_loss = self.generator.get_gan_loss(pred, target_batch, rewards)
             del rewards, pred
             self.rollout.update_params()
-            tqdm_dict = {'d_loss': g_loss}
+            tqdm_dict = {'g_loss': g_loss}
             output = OrderedDict({
                 'loss': g_loss,
                 'progress_bar': tqdm_dict,
