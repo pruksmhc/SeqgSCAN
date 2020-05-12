@@ -3,6 +3,7 @@ import torch
 import os
 from torch.optim.lr_scheduler import LambdaLR
 import torch.nn.functional as F
+from torch.autograd import Variable
 from seq2seq.model import Model
 from seq2seq.rollout import Rollout
 from seq2seq.gSCAN_dataset import GroundedScanDataset
@@ -43,25 +44,42 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
                                            sos_idx=training_set.input_vocabulary.sos_idx,
                                            eos_idx=training_set.input_vocabulary.eos_idx
                                            )
+
+            fake = torch.zeros(neg_samples.size(0), dtype=torch.float)
+            fake = fake.type_as(positive_samples).float().cuda()
+            neg_out = discriminator.batchClassify(neg_samples)
+            neg_out_copy = neg_out.clone().detach()
+            fake_loss = Variable(F.binary_cross_entropy(neg_out_copy.detach(), fake).cuda(), requires_grad=True)
             positive_samples = generator.remove_start_of_sequence(positive_samples)
-            positive_samples = positive_samples.cpu().numpy().tolist()
-            neg_samples = neg_samples.cpu().numpy().tolist()
-            labels = [[0.9] * len(positive_samples)] + [[0.1] * len(neg_samples)]
-            labels = [x for y in labels for x in y]
-            target_batch = positive_samples + neg_samples
-            num_examples_seen += len(target_batch)
-            # Now, let's randomly shuffle these up.
-            exs = list(zip(target_batch, labels))
-            random.shuffle(exs)
-            target_batch, labels = zip(*exs)
-            target_batch = torch.Tensor(target_batch)
-            if use_cuda:
-                labels = torch.Tensor(labels).cuda()
-            else:
-                labels = torch.Tensor(labels)
-            out = discriminator.batchClassify(target_batch.long())
-            del target_batch
-            loss = loss_fn(out, labels)
+
+            valid = torch.ones(positive_samples.size(0), dtype=torch.float)
+            valid = valid.type_as(positive_samples).float().cuda()
+            pos_out = discriminator.batchClassify(positive_samples)
+            pos_out_copy = pos_out.clone().detach()
+            real_loss = Variable(F.binary_cross_entropy(pos_out_copy, valid).cuda(), requires_grad=True)
+
+            loss = (real_loss + fake_loss) / 2
+
+
+            # positive_samples = positive_samples.cpu().numpy().tolist()
+            # neg_samples = neg_samples.cpu().numpy().tolist()
+            # labels = [[0.9] * len(positive_samples)] + [[0.1] * len(neg_samples)]
+            # labels = [x for y in labels for x in y]
+            # target_batch = positive_samples + neg_samples
+            # num_examples_seen += len(target_batch)
+            # # Now, let's randomly shuffle these up.
+            # exs = list(zip(target_batch, labels))
+            # random.shuffle(exs)
+            # target_batch, labels = zip(*exs)
+            # target_batch = torch.Tensor(target_batch)
+            # if use_cuda:
+            #     labels = torch.Tensor(labels).cuda()
+            # else:
+            #     labels = torch.Tensor(labels)
+            # out = discriminator.batchClassify(target_batch.long())
+            # del target_batch
+            # loss = loss_fn(out, labels)
+
             dis_opt.zero_grad()
             loss.backward()
             dis_opt.step()
@@ -69,20 +87,22 @@ def train_discriminator(training_set, discriminator, training_batch_size, genera
             total_loss += loss.data.item()
             del loss
 
-            total_acc += torch.sum((out > 0.5) == (labels > 0.5)).data.item()
-            if i % 500 == 0:  # we print statistics every 500 steps
-                print_loss = float(total_loss) / float(i)  # divide by how many updates there were
-                print_acc = total_acc / float(num_examples_seen)
-                print('average_loss = %.4f, train_acc = %.4f' % (print_loss, print_acc))
-                torch.save(discriminator.state_dict(), "%s.ckpt" % name)
-
-        training_set_size = len(training_set._examples)
-        total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
-        total_acc /= float(num_examples_seen)
-        if total_acc > 1.0:
-            import pdb
-            pdb.set_trace()
-        print('average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
+        if i % 500 == 0:
+            print('average_loss = {:.4f}'.format(total_loss / float(i)))
+            # total_acc += torch.sum((out > 0.5) == (labels > 0.5)).data.item()
+        #     if i % 500 == 0:  # we print statistics every 500 steps
+        #         print_loss = float(total_loss) / float(i)  # divide by how many updates there were
+        #         # print_acc = total_acc / float(num_examples_seen)
+        #         print('average_loss = %.4f, train_acc = %.4f' % (print_loss, print_acc))
+        #         torch.save(discriminator.state_dict(), "%s.ckpt" % name)
+        #
+        # training_set_size = len(training_set._examples)
+        # total_loss /= math.ceil(2 * training_set_size / float(training_batch_size))
+        # total_acc /= float(num_examples_seen)
+        # if total_acc > 1.0:
+        #     import pdb
+        #     pdb.set_trace()
+        # print('average_loss = %.4f, train_acc = %.4f' % (total_loss, total_acc))
         torch.save(discriminator.state_dict(), "{}.ckpt".format(name))
         del total_loss, total_acc
 
