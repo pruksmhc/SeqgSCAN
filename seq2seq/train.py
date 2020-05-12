@@ -303,7 +303,7 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
             # Print current metrics.
             if training_iteration % print_every == 0:
                 target_scores = target_scores.view(target_batch.shape[0], target_batch.shape[1], -1)
-                # accuracy, exact_match = generator.get_metrics(target_scores, target_batch)
+                accuracy, exact_match = generator.get_metrics(target_scores, target_batch)
                 learning_rate = scheduler.get_lr()[0]
                 logger.info("Iteration %08d, loss %8.4f, learning_rate %.5f,"
                             % (training_iteration, loss, learning_rate))

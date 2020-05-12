@@ -39,7 +39,7 @@ parser.add_argument("--load_vocabularies", dest="generate_vocabularies", default
                     help="Whether to use previously saved vocabularies.")
 
 # Training and learning arguments
-parser.add_argument("--training_batch_size", type=int, default=50)
+parser.add_argument("--training_batch_size", type=int, default=100)
 parser.add_argument("--k", type=int, default=0, help="How many examples from the adverb_1 split to move to train.")
 parser.add_argument("--test_batch_size", type=int, default=1, help="Currently only 1 supported due to decoder.")
 parser.add_argument("--max_training_examples", type=int, default=None, help="If None all are used.")
