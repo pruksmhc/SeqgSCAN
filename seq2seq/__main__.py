@@ -108,8 +108,8 @@ parser.add_argument("--pretrain_gen_path", default=None, type=str, help="If spec
 parser.add_argument("--pretrain_disc_path", default=None, type=str,
                     help="If specified loads the discriminator weights from the given path. Must be a cpkt file."
                          "Otherwise pretrains the discriminator.")
-parser.add_argument("--pretrain_gen_epochs", type=int, default=1000)
-parser.add_argument("--pretrain_disc_epochs", type=int, default=10)
+parser.add_argument("--pretrain_gen_epochs", type=int, default=5)
+parser.add_argument("--pretrain_disc_epochs", type=int, default=5)
 parser.add_argument("--load_tensors_from_path", type=str, default=None, help='Path for the pickled tensors file (.pkl)')
 
 # Other arguments
