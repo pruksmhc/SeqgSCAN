@@ -222,7 +222,7 @@ class SeqGAN(pl.LightningModule):
                 'progress_bar': tqdm_dict,
                 'log': tqdm_dict
             })
-            self.save_model(batch_idx)
+            self.save_model()
             return output
 
     def train_dataloader(self):

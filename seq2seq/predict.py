@@ -5,6 +5,7 @@ import logging
 from typing import Iterator
 import time
 import json
+from tqdm import tqdm
 
 from seq2seq.helpers import sequence_accuracy
 from seq2seq.gSCAN_dataset import GroundedScanDataset
@@ -30,10 +31,10 @@ def predict_and_save(dataset: GroundedScanDataset, model: nn.Module, output_file
         with torch.no_grad():
             i = 0
             for (input_sequence, derivation_spec, situation_spec, output_sequence, target_sequence,
-                 attention_weights_commands, attention_weights_situations, _) in predict(
+                 attention_weights_commands, attention_weights_situations, _) in tqdm(predict(
                     dataset.get_data_iterator(batch_size=1), model=model, max_decoding_steps=max_decoding_steps,
                     pad_idx=dataset.target_vocabulary.pad_idx, sos_idx=dataset.target_vocabulary.sos_idx,
-                    eos_idx=dataset.target_vocabulary.eos_idx):
+                    eos_idx=dataset.target_vocabulary.eos_idx)):
                 i += 1
                 accuracy = sequence_accuracy(output_sequence, target_sequence[0].tolist()[1:-1])
                 input_str_sequence = dataset.array_to_sentence(input_sequence[0].tolist(), vocabulary="input")

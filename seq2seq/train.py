@@ -222,24 +222,24 @@ def train(data_path: str, data_directory: str, generate_vocabularies: bool, inpu
         optimizer.load_state_dict(optimizer_state_dict)
         start_iteration = generator.trained_iterations
         logger.info("Loaded checkpoint '{}' (iter {})".format(resume_from_file, start_iteration))
-    #
-    # if pretrain_gen_path is None:
-    #     print('Pretraining generator with MLE...')
-    #     pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
-    #                         name='pretrained_generator_better')
-    # else:
-    #     print('Load pretrained generator weights')
-    #     generator_weights = torch.load(pretrain_gen_path)
-    #     generator.load_state_dict(generator_weights)
-    #
-    # if pretrain_disc_path is None:
-    #     print('Pretraining Discriminator....')
-    #     train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
-    #                         name=os.path.join( output_directory, "pretrained_discriminator_better"))
-    # else:
-    #     print('Loading Discriminator....')
-    #     discriminator_weights = torch.load(pretrain_disc_path)
-    #     discriminator.load_state_dict(discriminator_weights)
+    
+    if pretrain_gen_path is None:
+         print('Pretraining generator with MLE...')
+         pre_train_generator(training_set, training_batch_size, generator, seed, pretrain_gen_epochs,
+                             name='pretrained_generator_better')
+     else:
+         print('Load pretrained generator weights')
+         generator_weights = torch.load(pretrain_gen_path)
+         generator.load_state_dict(generator_weights)
+    
+    if pretrain_disc_path is None:
+         print('Pretraining Discriminator....')
+         train_discriminator(training_set, discriminator, training_batch_size, generator, seed, pretrain_disc_epochs,
+                             name=os.path.join( output_directory, "pretrained_discriminator_better"))
+    else:
+         print('Loading Discriminator....')
+         discriminator_weights = torch.load(pretrain_disc_path)
+         discriminator.load_state_dict(discriminator_weights)
 
     logger.info("Training starts..")
     training_iteration = start_iteration

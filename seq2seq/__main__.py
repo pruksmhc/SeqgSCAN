@@ -172,15 +172,11 @@ def main(flags):
                           target_pad_idx=test_set.target_vocabulary.pad_idx,
                           target_eos_idx=test_set.target_vocabulary.eos_idx,
                           **flags)
-            model = model.cuda() if use_cuda else modeltorch.cat(target_batch, dim=0)
+            model = model.cuda() if use_cuda else model
 
             # Load model and vocabularies if resuming.
-            assert os.path.isfile(flags["resume_from_file"]), "No checkpoint found at {}".format(
-                flags["resume_from_file"])
             logger.info("Loading checkpoint from file at '{}'".format(flags["resume_from_file"]))
-            model.load_model(flags["resume_from_file"])
-            start_iteration = model.trained_iterations
-            logger.info("Loaded checkpoint '{}' (iter {})".format(flags["resume_from_file"], start_iteration))
+            model.load_state_dict(torch.load(flags["resume_from_file"], map_location=torch.device('cpu')))
             output_file_name = "_".join([split, flags["output_file_name"]])
             output_file_path = os.path.join(flags["output_directory"], output_file_name)
             output_file = predict_and_save(dataset=test_set, model=model, output_file_path=output_file_path, **flags)
