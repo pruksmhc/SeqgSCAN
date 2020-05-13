@@ -2,7 +2,7 @@ for split in "test" "dev" "visual" "visual_easier" "situational_1" "situational_
      do
      echo $split
      echo $1
-     sbatch template.sbatch $split $1
+     sbatch template.sbatch $split $1 $2
 done 
 #  1: /path/to/templates.s
-# usage: generate_predctions.sh /path/to/checkpoint
+# usage: generate_predctions.sh /path/to/checkpoint /path/to/output/dir
