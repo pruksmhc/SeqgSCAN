@@ -16,14 +16,6 @@ Activate the environment and install the requirements with a package manager:
 Note that this repository depends on the grounded SCAN implementation to load the dataset from a dataset.txt with the function `GroundedScan.load_dataset_from_file()`.
 Before actually training models, unzip the data you want to use from [this repo](https://github.com/groundedSCAN/gSCAN_data) and put it in a folder `data`.
 
-### Alternative way of loading data
-In the folder `read_gscan` there is a separate `README.md` and code to read about how to prepare the data for a computational model in a way independent from the code in `GroundedScan`.
-
-
-## Contents
-
-Sequence to sequence models for Grounded SCAN.
-
 ### Training
 
 To train a model on a grounded SCAN dataset with a simple situation representation, run:
