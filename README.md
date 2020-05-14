@@ -1,4 +1,4 @@
-# Neural Baseline and GECA for Grounded SCAN
+# GANs for gSCAN
 
 This repository contains code for GAN training on the gSCAN dataset, and is based off of the code from the original [gSCAN directory](https://github.com/LauraRuis/groundedSCAN). 
 
